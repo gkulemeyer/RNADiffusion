@@ -8,7 +8,7 @@ def linear_betas(timesteps):
     betas = tr.linspace(0.0001, 0.01, timesteps, dtype=tr.float32)
     return betas
 
-def cosine_betas(timesteps, s=0.008):
+def cosine_betas(timesteps, s=0.02):
     """
     Cosine schedule as proposed in https://arxiv.org/abs/2102.09672
     Better for discrete data to prevent abrupt noise injection.
@@ -18,7 +18,9 @@ def cosine_betas(timesteps, s=0.008):
     alphas_cumprod = tr.cos(((x / timesteps) + s) / (1 + s) * math.pi * 0.5) ** 2
     alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-    return tr.clip(betas, 0, 0.999)
+    betas = tr.clip(betas, 0, 0.999)
+    betas[0] = 1e-7  
+    return betas
 
 def get_schedule(timesteps, get_betas, log=False):
     # beta = 1 - alpha
@@ -83,14 +85,18 @@ class DiffusionModel(nn.Module):
     
         # le agrego al mapa de contactos la clase 0/1
        # Convertir indices a One-Hot y mover canales al lugar 1: [B, L, L, 2] -> [B, 2, L, L]
-        xt_1_one_hot = F.one_hot(xt_1, num_classes=self.num_classes).permute(0, 3, 1, 2).float()
+       
+        if xt_1.dim() == 4:
+            xt_1_one_hot = xt_1 # Ya es vector [B, C, H, W]
+        else:
+            xt_1_one_hot = F.one_hot(xt_1, num_classes=self.num_classes).permute(0, 3, 1, 2).float() 
         
         # el vector alphas_t tiene que tener shape (batch_size, 1, 1, 1) para que la multiplicacion de matrices funcione
         alphas_t = extract(self.alphas, t, xt_1_one_hot.shape)
         one_minus_alpha_t = extract(self.one_minus_alphas, t, xt_1_one_hot.shape)
         # La distribución qt es una mezcla entre la distribución one-hot y la distribución uniforme
         qxt = alphas_t * xt_1_one_hot + one_minus_alpha_t / self.num_classes
-        return qxt
+        return qxt 
 
     def q_posterior(self, x0, xt, t):
         """ Dada una imagen xt, una x0 y un tiempo t, calcula la distribución q(xt-1|xt,x0)
@@ -126,40 +132,24 @@ class DiffusionModel(nn.Module):
         # Normalizo para que sea una distribución de probabilidad
         # sobre la dimensión de canales (dim 1)
         posterior = posterior / (posterior.sum(dim=1, keepdim=True) + 1e-8)
-        return posterior     
+        return posterior 
         
-    def predict_start(self, xt, t, condition, return_logits=False):
-        """
-        Predice x0 (probabilidades) a partir de xt.
-        Equivalente a p(x0 | xt).
-        """
-        # 1. Preparar entrada: Indices -> OneHot y Concatenación -> 2 + 16 = 18 canales
-        xt_oh = F.one_hot(xt, num_classes=self.num_classes).permute(0, 3, 1, 2).float()
-        unet_input = tr.cat([xt_oh, condition], dim=1)
+    def predict_start(self, xt, t, condition, return_logits=False): 
+            if xt.dim() == 4: # [B, C, H, W] -> Gumbel
+                xt_input = xt
+            else: # [B, H, W] ->  One-Hot
+                xt_input = F.one_hot(xt, num_classes=self.num_classes).permute(0, 3, 1, 2).float()
+                
+            unet_input = tr.cat([xt_input, condition], dim=1)
+            out = self.diffuser(unet_input, t)
 
-        # 2. Forward del modelo (Denoise function)
-        out = self.diffuser(unet_input, t)
-
-        # 3. Assertions de seguridad (Tal como en tu ejemplo)
-        assert out.size(0) == xt.size(0)
-        assert out.size(1) == self.num_classes
-        assert out.size()[2:] == xt.size()[1:]
-
-        # Para entrenamiento necesitamos logits crudos para calcular CE
-        if return_logits:
-            return out
-
-        # 4. Retornar Probabilidades (Softmax)
-        pred = F.softmax(out, dim=1)
-        return pred
+            if return_logits:
+                return out
+            return F.softmax(out, dim=1)
     
     def pred_p_xt_1_from_xt(self, xt, t, condition):
-        # Obtenemos p(x0 | xt)
-        pred = self.predict_start(xt, t, condition) 
-        # Calculamos posterior q(xt-1 | xt, x0_pred)
-        # Pasamos las probabilidades directas (Soft Decision) en vez de argmax (Hard Decision)
-        # para mejor información, aunque argmax funciona también.
-        return self.q_posterior(pred.argmax(dim=1), xt, t)
+        pred = self.predict_start(xt, t, condition)  
+        return self.q_posterior(pred, xt, t)
     
     def sample_from_logits(self, probs):
         
@@ -169,6 +159,7 @@ class DiffusionModel(nn.Module):
         probs_flat = probs.reshape(-1, num_classes)
         probs_flat = tr.clamp(probs_flat, min=0.0)
         probs_flat = probs_flat + 1e-6
+        probs_flat = probs_flat / probs_flat.sum(dim=-1, keepdim=True)
         
         # Tomo una muestra de la distribución logits
         sampled = tr.multinomial(probs_flat, num_samples=1).squeeze(-1)
@@ -176,13 +167,24 @@ class DiffusionModel(nn.Module):
         sampled = sampled.reshape(batch_size, height, width)
         return sampled    
     
-    
-    def q_sample(self, x0, t):
-        # x0 viene como [B, 2, L, L] (One Hot)
-        qxt_x0 = self.q_pred(x0, t)  # Obtengo la distribución qt
-        sample = self.sample_from_logits(qxt_x0)  # Muestreo de la distribución qt
-        return sample
-    
+    def q_sample(self, x0_oh, t, gumbel=True, temperature=1.0):
+        # x0_oh: [B, num_classes, H, W] (Debe ser One-Hot float)
+        
+        # 1. Obtener probabilidades q(xt|x0)
+        qxt_probs = self.q_pred(x0_oh, t)
+        qxt_probs = tr.clamp(qxt_probs, min=1e-20, max=1.0)
+        if gumbel:
+            # Gumbel-Softmax: Retorna Tensor Soft [B, C, H, W] diferenciable
+            # epsilon para evitar log(0)
+            eps = 1e-30
+            logits = tr.log(qxt_probs + eps)
+            # hard=False para que sea diferenciable
+            return F.gumbel_softmax(logits, tau=temperature, hard=False, dim=1)
+        else:
+            # Muestreo normal (Indices) - No diferenciable
+            probs_perm = qxt_probs.permute(0, 2, 3, 1) # [B, H, W, C]
+            sample_idx = tr.distributions.Categorical(probs_perm).sample()
+            return sample_idx
     
     @tr.no_grad()
     def p_sample(self, xt, t, condition):
@@ -200,7 +202,7 @@ class DiffusionModel(nn.Module):
         # Empezamos desde ruido puro (uniforme)
         xt = tr.randint(0, self.num_classes, shape, device=device).long() 
         
-        for t in reversed(range(1, self.time_steps)):
+        for t in reversed(range(0, self.time_steps)):
             t_batch = tr.full((batch_size,), t, device=device, dtype=tr.long)
             xt = self.p_sample(xt, t_batch, condition)
         return xt
@@ -244,3 +246,27 @@ class DiffusionModel(nn.Module):
                 return kl_pixelwise.sum() / (mask_s.sum() + 1e-8)
                 
             return kl_pixelwise.mean()
+    
+    def forward_all_timesteps(self, x0_oh, condition, mask=None):
+        """
+        Calculate the total Loss adding all VLB for each timestep.
+        """
+        batch_size = x0_oh.shape[0]
+        device = x0_oh.device
+        total_loss = 0
+        
+        # Bucle sobre todos los timesteps (0 a T-1)
+        for t_step in range(self.time_steps):
+            # Crear batch de tiempos constantes para este paso
+            t = tr.full((batch_size,), t_step, device=device).long()
+            
+            # 1. Muestrear xt 
+            xt = self.q_sample(x0_oh, t, gumbel=True, temperature=1.0)
+            
+            # 2. Calcular VLB para este paso t
+            # compute_vlb calcula la KL( Posterior Real || Posterior Predicha )
+            loss_t = self.compute_vlb(x0_oh, xt, t, condition, mask=mask)
+            
+            total_loss += loss_t 
+                 
+        return total_loss
