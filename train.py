@@ -1,154 +1,198 @@
-import datetime
-from tqdm import tqdm
-import os
 import torch as tr
-import torch.nn.functional as F
-from torch.utils.data import DataLoader, random_split   
+import numpy as np
+import pandas as pd
+import os
+import json
+from datetime import datetime
+from tqdm import tqdm
+from torch.utils.data import DataLoader
+import time
+
+# --- PROJECT IMPORTS ---
 from src.dataset import SeqDataset, pad_batch
 from src.diffusion import DiffusionModel
 from src.layers.simpleunet import SimpleUNet
+from src.metrics import contact_f1
+from src.utils import save_config, load_model
+# --- UTILITIES ---
 
-timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+def get_timestamp():
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
 
+# --- CORE FUNCTIONS ---
 
-# --- HYPERPARAMETERS ---
-BATCH_SIZE = 2       
-LR = 1e-3           
-EPOCHS = 5         
-TIMESTEPS = 25     # diffusion steps
-LAMBDA_VLB = 0.1   # loss VLB coefficent
-DEVICE = tr.device("cuda" if tr.cuda.is_available() else "cpu")
-
-# --- LOG AND DATASETS ---
-LOG_PATH = "logs/" + timestamp
-os.makedirs(LOG_PATH, exist_ok=True) 
-
-
-DATA_PATH  = "data/ArchiveII_128_random_split/"
-TRAIN_PATH = DATA_PATH +  "train.csv"
-VAL_PATH   = DATA_PATH + "val.csv"
-
-train_dataset = SeqDataset(TRAIN_PATH)
-val_dataset   = SeqDataset(VAL_PATH) 
-print(f"Train: {len(train_dataset)} | Val: {len(val_dataset)}")
-
-
-# --- DATALOADERS ---
-train_loader = DataLoader(
-    train_dataset, 
-    batch_size=BATCH_SIZE, 
-    shuffle=True, 
-    collate_fn=pad_batch, 
-    num_workers=2
-)
-
-val_loader = DataLoader(
-    val_dataset, 
-    batch_size=BATCH_SIZE, 
-    shuffle=False, 
-    collate_fn=pad_batch,
-    num_workers=2
-)
-
-# --- MODEL ---
-unet = SimpleUNet(in_channels=18, out_channels=2, base_dim=64)
-model = DiffusionModel(
-    num_classes=2, 
-    embedding_dim=64, 
-    time_steps=TIMESTEPS, 
-    model=lambda **kwargs: unet
-)
-model.to(DEVICE)
-
-optimizer = tr.optim.Adam(model.parameters(), lr=LR)
-tr.cuda.empty_cache()
-
-# --- HISTORY ---
-history = {'train_loss': [], 'val_loss': []}
-best_val_loss = float('inf')
-
-print("START TRAINING...")
-
-for epoch in range(EPOCHS):
-    # ==========================
-    # 1. TRAINING
-    # ==========================
+def train_one_epoch(model, loader, optimizer, device):
     model.train()
-    train_loss_accum = 0
+    epoch_loss = []
     
-    pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS} [Train]", leave=True)
+    pbar = tqdm(loader, desc="Training", leave=False)
+    
     for batch in pbar:
+        cond = batch["outer"].to(device)
+        target = batch["contact_oh"].to(device)
+        mask = batch["mask"].to(device)       
+        
         optimizer.zero_grad()
         
-        # LOAD DATA
-        x0_idx = batch["contact"].to(DEVICE)       # -1 en padding
-        x0_oh = batch["contact_oh"].to(DEVICE)     # 0.0 en padding
-        condition = batch["outer"].to(DEVICE)
-        mask = batch["mask"].to(DEVICE)            # 1.0 valido, 0.0 padding
-        
-        # SAMPLE t
-        t = tr.randint(0, TIMESTEPS, (x0_idx.shape[0],), device=DEVICE).long()
-        
-        # NOISE - Forward 
-        xt_noisy = model.q_sample(x0_oh, t)
-        
-        # clean noise on padding
-        xt_noisy = xt_noisy * mask.squeeze(1).long()
-        
-        # predict x0
-        logits_pred = model.predict_start(xt_noisy, t, condition, return_logits=True)
-        
-        # Loss Simple + VLB
-        loss_simple = F.cross_entropy(logits_pred, x0_idx, ignore_index=-1)
-        loss_vlb = model.compute_vlb(x0_oh, xt_noisy, t, condition, mask=mask)
-        loss = loss_simple + (LAMBDA_VLB * loss_vlb)
-        
+        # Forward pass (diffusion loss)
+        loss = model.forward_all_timesteps(target, cond, mask=mask)
+             
         loss.backward()
         optimizer.step()
+        optimizer.zero_grad()
         
-        train_loss_accum += loss.item()
+        epoch_loss.append(loss.item())
+        pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+        
+    return np.mean(epoch_loss)
 
-    avg_train_loss = train_loss_accum / len(train_loader)
+@tr.no_grad()
+def validate(model, loader, device):
+    """
+    Computes Validation Loss and F1 Score (via sampling).
+    """
+    model.eval()
+    val_loss = []
+    val_f1 = []
     
-    # ==========================
-    # 2. VALIDATION
-    # ==========================
-    model.eval() 
-    val_loss_accum = 0
+    for batch in tqdm(loader, desc="Validating", leave=False):
+        cond = batch["outer"].to(device)
+        target = batch["contact_oh"].to(device)
+        mask = batch["mask"].to(device)       
+        lens = batch["length"]
+        
+        # 1. Validation Loss (No sampling)
+        loss = model.forward_all_timesteps(target, cond, mask=mask)
+        val_loss.append(loss.item())
+        
+        # 2. Validation F1 (Sampling required)
+        samples = model._sample(cond)
+        f1_score = contact_f1(samples, target, lengths=lens, reduce=True)
+        val_f1.append(f1_score)
+        
+    return np.mean(val_loss), np.mean(val_f1)
+
+# --- EXPERIMENT RUNNER ---
+
+def run_experiment(config):
+    """
+    Runs a full training session based on the provided configuration dictionary.
+    """
+    # 1. Directory Setup
+    timestamp = get_timestamp()
+    exp_name = f"exp_T{config['timesteps']}_E{config['epochs']}_{timestamp}"
+    log_dir = os.path.join("logs", exp_name)
+    os.makedirs(log_dir, exist_ok=True)
     
-    with tr.no_grad(): 
-        val_pbar = tqdm(val_loader, desc=f"Epoch {epoch+1}/{EPOCHS} [Val  ]", leave=True)
-        for batch in val_pbar:
-            x0_idx = batch["contact"].to(DEVICE)
-            x0_oh = batch["contact_oh"].to(DEVICE)
-            condition = batch["outer"].to(DEVICE)
-            mask = batch["mask"].to(DEVICE)
-            
-            # Same noise to validate the loss
-            t = tr.randint(0, TIMESTEPS, (x0_idx.shape[0],), device=DEVICE).long()
-            xt_noisy = model.q_sample(x0_oh, t)
-            xt_noisy = xt_noisy * mask.squeeze(1).long()
-            
-            logits_pred = model.predict_start(xt_noisy, t, condition, return_logits=True)
-            
-            loss_simple = F.cross_entropy(logits_pred, x0_idx, ignore_index=-1)
-            loss_vlb = model.compute_vlb(x0_oh, xt_noisy, t, condition, mask=mask)
-            
-            val_loss = loss_simple + (LAMBDA_VLB * loss_vlb)
-            val_loss_accum += val_loss.item()
-            
-    avg_val_loss = val_loss_accum / len(val_loader)
+    save_config(config, log_dir)
     
-    # ==========================
-    # 3. LOGGING AND CHECKPOINT
-    # ==========================
-    history['train_loss'].append(avg_train_loss)
-    history['val_loss'].append(avg_val_loss)
+    print(f"\n{'='*40}")
+    print(f"STARTING EXPERIMENT: {exp_name}")
+    print(f"Config: {config}")
+    print(f"{'='*40}")
+
+    device = tr.device("cuda" if tr.cuda.is_available() else "cpu")
+
+    # 2. Data Loading
+    train_ds = SeqDataset(config["train_path"])
+    val_ds = SeqDataset(config["val_path"])
     
-    print(f"Epoch {epoch+1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+    train_loader = DataLoader(
+        train_ds, 
+        batch_size=config["batch_size"], 
+        shuffle=True, 
+        collate_fn=pad_batch, 
+        num_workers=2
+    )
+    val_loader = DataLoader(
+        val_ds, 
+        batch_size=config["batch_size"], 
+        shuffle=False, 
+        collate_fn=pad_batch, 
+        num_workers=2
+    )
     
-    # Save best model
-    if avg_val_loss < best_val_loss:
-        best_val_loss = avg_val_loss
-        tr.save(model.state_dict(), LOG_PATH + "/best_model.pt")
-        print(f"   --> SAVING BEST MODEL (Val Loss: {avg_val_loss:.4f}) \t epoch: {epoch}")
+    model = load_model(config=config, eval=False)
+    
+    optimizer = tr.optim.Adam(model.parameters(), lr=config["lr"])
+    
+    # 4. Training Loop
+    metrics = []
+    best_val_f1 = -1.0
+    
+    for epoch in range(1, config["epochs"] + 1):
+        start_time = time.perf_counter()
+        print(f"\nEpoch {epoch}/{config['epochs']}")
+        
+        # Train and valid
+        train_loss = train_one_epoch(model, train_loader, optimizer, device)
+        end_time = time.perf_counter()
+        
+        val_loss, val_f1 = validate(model, val_loader, device)
+        
+        # Logging
+        print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val F1: {val_f1:.4f}")
+        
+        # Update History
+        metrics.append({
+            "epoch": epoch,
+            "epoch_time": end_time - start_time,
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            "val_f1": val_f1
+        })
+        
+        # Save CSV (updates every epoch)
+        pd.DataFrame(metrics).to_csv(os.path.join(log_dir, "metrics.csv"), index=False)
+        
+        # Checkpointing
+        if val_f1 > best_val_f1:
+            best_val_f1 = val_f1
+            tr.save(model.state_dict(), os.path.join(log_dir, "best_model.pt"))
+            print("Best Model Saved!")
+            
+        # Save latest state
+        tr.save(model.state_dict(), os.path.join(log_dir, "last_model.pt"))
+
+    print(f"Experiment finished. Logs saved to: {log_dir}")
+    return log_dir, best_val_f1
+
+def set_experiment_config(base_config, epochs=None, timesteps=None, note=""):
+    """
+    Merges base configuration with overrides for specific experiments.
+    """
+    config = base_config.copy()
+    config["epochs"] = epochs if epochs is not None else config.get("epochs", 1)
+    config["timesteps"] = timesteps if timesteps is not None else config.get("timesteps", 1)
+    config["note"] = note
+    return config
+
+# --- ABLATION STUDY SETUP ---
+if __name__ == "__main__":
+    
+    BASE_DATA_DIR = "data/ArchiveII_128_random_split"
+    
+    base_dict = {
+        "train_path": f"{BASE_DATA_DIR}/train.csv",
+        "val_path": f"{BASE_DATA_DIR}/val.csv",
+        "batch_size": 4,
+        "lr": 1e-3
+        }
+
+    # timestep_options = [5, 10, 50]
+    epoch_options = [50]
+    
+    # experiment_configs1 = [set_experiment_config(base_dict, epochs=10, timesteps=t, note="ablation") 
+    #                       for t in timestep_options]
+    experiment_configs1 = []
+    experiment_configs2 = [set_experiment_config(base_dict, epochs=e, timesteps=50, note="ablation") 
+                          for e in epoch_options]
+
+    print(f"Running {len(experiment_configs1 + experiment_configs2)} experiments.")
+    
+    for i, conf in enumerate(experiment_configs1 + experiment_configs2):
+        try:
+            run_experiment(conf)
+        except Exception as e:
+            print(f"ERROR in experiment {i}: {e}")
+            continue
