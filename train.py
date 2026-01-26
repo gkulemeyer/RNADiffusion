@@ -13,15 +13,11 @@ from src.dataset import SeqDataset, pad_batch
 from src.diffusion import DiffusionModel
 from src.layers.simpleunet import SimpleUNet
 from src.metrics import contact_f1
-
+from src.utils import save_config, load_model
 # --- UTILITIES ---
 
 def get_timestamp():
     return datetime.now().strftime("%Y%m%d_%H%M%S")
-
-def save_config(config, path):
-    with open(os.path.join(path, "config.json"), 'w') as f:
-        json.dump(config, f, indent=4)
 
 # --- CORE FUNCTIONS ---
 
@@ -89,6 +85,7 @@ def run_experiment(config):
     os.makedirs(log_dir, exist_ok=True)
     
     save_config(config, log_dir)
+    
     print(f"\n{'='*40}")
     print(f"STARTING EXPERIMENT: {exp_name}")
     print(f"Config: {config}")
@@ -114,16 +111,8 @@ def run_experiment(config):
         collate_fn=pad_batch, 
         num_workers=2
     )
-
-    # 3. Model Initialization
-    unet = SimpleUNet(in_channels=18, out_channels=2, base_dim=64)
-    model = DiffusionModel(
-        num_classes=2, 
-        embedding_dim=64, 
-        time_steps=config["timesteps"], 
-        model=lambda **kwargs: unet
-    )
-    model.to(device)
+    
+    model = load_model(config=config, eval=False)
     
     optimizer = tr.optim.Adam(model.parameters(), lr=config["lr"])
     

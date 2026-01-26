@@ -2,25 +2,16 @@ import pandas as pd
 import math
 from torch.utils.data import Dataset
 import torch.nn.functional as F
-import torch as tr
-import os
-import json
-import pickle
+import torch as tr 
+import json 
 from .embeddings import OneHotEmbedding
-from .utils import valid_mask, prob_mat, bp2matrix, dot2bp
+from .utils import bp2matrix, dot2bp
 
 class SeqDataset(Dataset):
     def __init__(
-        self, dataset_path, min_len=0, max_len=512, verbose=False,  for_prediction=False, training=False, **kargs):
-        """
-        interaction_prior: none, probmat
-        """
-        self.max_len = max_len
-        self.verbose = verbose   
-
-        # Loading dataset
-        data = pd.read_csv(dataset_path)
-        self.training = training
+        self, dataset_path, min_len=0, max_len=512,   for_prediction=False,  **kargs): 
+        self.max_len = max_len 
+        data = pd.read_csv(dataset_path) 
 
         if for_prediction:
             assert (
@@ -67,19 +58,24 @@ class SeqDataset(Dataset):
 
     def __getitem__(self, idx):
         seqid = self.ids[idx]
-    
         sequence = self.sequences[idx]
+    
         L = len(sequence)
         Mc = None
         if self.base_pairs is not None:
             Mc = bp2matrix(L, self.base_pairs[idx])
+            
         Mc_OH = F.one_hot(Mc.long(), num_classes=2).float().permute(2, 0, 1) if Mc is not None else None
-
         seq_emb = self.embedding.seq2emb(sequence)
         outer = self.embedding.outer_emb(seq_emb)
       
-        item = {"embedding": seq_emb, "contact": Mc, "contact_oh": Mc_OH,"outer" : outer, "length": L,
-                "id": seqid, "sequence": sequence} 
+        item = {"id": seqid,
+                "length": L,
+                "sequence": sequence,
+                "embedding": seq_emb,
+                "outer" : outer,
+                "contact": Mc,
+                "contact_oh": Mc_OH} 
                 
         return item
 
@@ -109,13 +105,13 @@ def pad_batch(batch):
             contact_pad[k, : L[k], : L[k]] = batch[k]["contact"]
             contact_oh_pad[k, :, : L[k], : L[k]] = batch[k]["contact_oh"]
 
-    out_batch = {"contact": contact_pad, 
-                 "contact_oh": contact_oh_pad,
+    out_batch = {"id": [b["id"] for b in batch],
+                 "sequence": [b["sequence"] for b in batch],
+                 "length": L, 
                  "embedding": embedding_pad, 
                  "outer": outer_padded,
-                 "length": L, 
-                 "mask": mask_pad,
-                 "sequence": [b["sequence"] for b in batch],
-                 "id": [b["id"] for b in batch]}
+                 "contact": contact_pad, 
+                 "contact_oh": contact_oh_pad,
+                 "mask": mask_pad}
     
     return out_batch
