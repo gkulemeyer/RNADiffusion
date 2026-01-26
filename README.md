@@ -2,10 +2,23 @@
 
 RNADiffusion is a diffusion-based **seq2struct model** for **RNA secondary structure prediction**.
 
-The model takes an RNA sequence as input, builds a 2D representation via an outer product of sequence concatenates it with 2D noise, and uses a **diffusion model** to generate a contact map representing RNA secondary structure.
+The model takes an RNA sequence as input, builds a 2D representation via an outer product of sequence concatenates it with 2D noise, and uses a **diffusion model** to generate a contact map representing RNA secondary structure. 
+Current model: Multinomial Diffusion base. (No log space). Full NLL hardcoded beta_0.
+
 
 This repository is intended for model development, training, and experimentation.
+ 
+    -- Data--
+    ArchiveII_max_128
+                random split 70/15/15 
 
+    -- training setup--
+    timesteps: {5, 10, 25, 50}
+    epochs: {5, 10, 25, 50}
+
+    -- Ensemble analysis -- 
+    50 samples - 20 trials 
+ 
 ---
 
 ## Usage
@@ -28,11 +41,11 @@ The `ensemble_stats.py` script takes NUM_TRIALS, and NUM_CONSENSUS to make stats
 For example, if NUM_TRIALS = 2 and NUM_CONSENSUS = 5, take 5 samples, obtain consensus and calculate F1. Then repeat 2 times and average.
 
 ### Notebooks
-
+    1-3. Model dev.
     4. Training loss analysis.
     5. Ensemble analysis.
-
----
+ 
+   
 
 ## TODO
 
