@@ -74,43 +74,48 @@ def evaluate_rna_k_consensus(rna, chosen_seeds):
 ###################################################################
 #######################      MAIN       ###########################
 
-LOGS_PATH = "logs/"
+# LOGS_PATH = "logs/"
 TRIALS = 20
 N_CONSENSUS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,13, 14, 15, 20, 25]    
+BASE_LOG = "logs/ArchiveII_simfold_128/" 
+
 
 def main():
-    ALL_EXPS = [
-        exp for exp in os.listdir(LOGS_PATH) 
-        if not exp.endswith(".csv")
+    for sim in ["sim60/", "sim70/", "sim80/", "sim90/"]:
+        LOGS_PATH = os.path.join(BASE_LOG, sim)  
+        
+        ALL_EXPS = [
+            exp for exp in os.listdir(LOGS_PATH) 
+            if not exp.endswith(".csv")
+                    ]
+        for exp_dir in ALL_EXPS:
+            
+            exp_dir = LOGS_PATH + exp_dir + "/"
+            samples = exp_dir + "raw_samples"
+            print(f"Executing {exp_dir}")
+            
+            paths = [os.path.join(samples, f) 
+                    for f in os.listdir(samples) if f.endswith(".pt")]
+            paths.sort()
+            
+            test_ensemble = [SeqEnsemble(p) for p in tqdm(paths, desc="Loading")] 
+            max_samples = min([ens.num_avail_samples for ens in test_ensemble])
+
+            ### Choose the #Trial seeds to use for the each N_consensus
+            chosen_seeds = {}
+            for k in N_CONSENSUS:
+                chosen_seeds[k] = [
+                    random.sample(range(max_samples), k)
+                    for _ in range(TRIALS)
                 ]
-    for exp_dir in ALL_EXPS:
-        
-        exp_dir = LOGS_PATH + exp_dir + "/"
-        samples = exp_dir + "raw_samples"
-        print(f"Executing {exp_dir}")
-        
-        paths = [os.path.join(samples, f) 
-                for f in os.listdir(samples) if f.endswith(".pt")]
-        paths.sort()
-        
-        test_ensemble = [SeqEnsemble(p) for p in tqdm(paths, desc="Loading")] 
-        max_samples = min([ens.num_avail_samples for ens in test_ensemble])
+                    
+            all_stats = []
+            for rna_samples in tqdm(test_ensemble, desc="Evaluating"):
+                row = evaluate_rna_k_consensus(rna_samples, chosen_seeds)
+                all_stats.append(row)
 
-        ### Choose the #Trial seeds to use for the each N_consensus
-        chosen_seeds = {}
-        for k in N_CONSENSUS:
-            chosen_seeds[k] = [
-                random.sample(range(max_samples), k)
-                for _ in range(TRIALS)
-            ]
-                
-        all_stats = []
-        for rna_samples in tqdm(test_ensemble, desc="Evaluating"):
-            row = evaluate_rna_k_consensus(rna_samples, chosen_seeds)
-            all_stats.append(row)
-
-        df_stats = pd.DataFrame(all_stats) 
-        df_stats.to_csv(exp_dir + f"enemble_stats_{TRIALS}_trials.csv")     
+            df_stats = pd.DataFrame(all_stats) 
+            df_stats.to_csv(exp_dir + f"enemble_stats_{TRIALS}_trials.csv")     
         
 
 if __name__ == "__main__":

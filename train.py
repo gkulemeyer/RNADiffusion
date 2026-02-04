@@ -39,7 +39,6 @@ def train_one_epoch(model, loader, optimizer, device):
              
         loss.backward()
         optimizer.step()
-        optimizer.zero_grad()
         
         epoch_loss.append(loss.item())
         pbar.set_postfix({"loss": f"{loss.item():.4f}"})
@@ -81,7 +80,8 @@ def run_experiment(config):
     # 1. Directory Setup
     timestamp = get_timestamp()
     exp_name = f"exp_T{config['timesteps']}_E{config['epochs']}_{timestamp}"
-    log_dir = os.path.join("logs", exp_name)
+    log_path = config["log_path"]
+    log_dir = os.path.join(log_path, exp_name)
     os.makedirs(log_dir, exist_ok=True)
     
     save_config(config, log_dir)
@@ -148,11 +148,17 @@ def run_experiment(config):
         # Checkpointing
         if val_f1 > best_val_f1:
             best_val_f1 = val_f1
-            tr.save(model.state_dict(), os.path.join(log_dir, "best_model.pt"))
+            tr.save({
+                "epoch": epoch,
+                "model_state": model.state_dict(),
+                "optimizer_state": optimizer.state_dict(),
+                "best_val_f1": best_val_f1,
+                "config": config
+            }, os.path.join(log_dir, "best_model.pt")) 
             print("Best Model Saved!")
             
-        # Save latest state
-        tr.save(model.state_dict(), os.path.join(log_dir, "last_model.pt"))
+    # Save latest state
+    tr.save(model.state_dict(), os.path.join(log_dir, "last_model.pt"))
 
     print(f"Experiment finished. Logs saved to: {log_dir}")
     return log_dir, best_val_f1
@@ -170,29 +176,30 @@ def set_experiment_config(base_config, epochs=None, timesteps=None, note=""):
 # --- ABLATION STUDY SETUP ---
 if __name__ == "__main__":
     
-    BASE_DATA_DIR = "data/ArchiveII_128_random_split"
-    
-    base_dict = {
-        "train_path": f"{BASE_DATA_DIR}/train.csv",
-        "val_path": f"{BASE_DATA_DIR}/val.csv",
-        "batch_size": 4,
-        "lr": 1e-3
-        }
+    BASE_DATA_DIR = "data/simfolds/simfolds_max128/joined/"
+    for sim in ["sim60", "sim70", "sim80", "sim90"]:
+        DATA_DIR = os.path.join(BASE_DATA_DIR, sim)
+        os.makedirs(DATA_DIR, exist_ok=True)
+                
+        base_dict = {
+            "train_path": f"{DATA_DIR}/train.csv",
+            "val_path": f"{DATA_DIR}/valid.csv",
+            "log_path": f"logs/ArchiveII_simfold_128/{sim}",
+            "batch_size": 4,
+            "lr": 1e-3
+            }
 
-    # timestep_options = [5, 10, 50]
-    epoch_options = [50]
-    
-    # experiment_configs1 = [set_experiment_config(base_dict, epochs=10, timesteps=t, note="ablation") 
-    #                       for t in timestep_options]
-    experiment_configs1 = []
-    experiment_configs2 = [set_experiment_config(base_dict, epochs=e, timesteps=50, note="ablation") 
-                          for e in epoch_options]
+        timestep_options = [5, 10, 15, 25]
+        note=f"simfold ablation: {sim}. Archive II max 128."
+        
+        experiment_configs = [set_experiment_config(base_dict, epochs=15, timesteps=t, note=note) 
+                            for t in timestep_options] 
 
-    print(f"Running {len(experiment_configs1 + experiment_configs2)} experiments.")
-    
-    for i, conf in enumerate(experiment_configs1 + experiment_configs2):
-        try:
-            run_experiment(conf)
-        except Exception as e:
-            print(f"ERROR in experiment {i}: {e}")
-            continue
+        print(f"Running {len(experiment_configs)} experiments.")
+        
+        for i, conf in enumerate(experiment_configs):
+            try:
+                run_experiment(conf)
+            except Exception as e:
+                print(f"ERROR in experiment {i}: {e}")
+                continue
