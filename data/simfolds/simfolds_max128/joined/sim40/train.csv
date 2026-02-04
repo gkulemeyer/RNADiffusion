@@ -1,0 +1,4 @@
+id,sequence,structure,base_pairs,len,fam
+srp_Schi.pomb._AU010514,AAACAAUGCACAUCACUACCGGGUCUUGGGCAGUGCGAUAGCGAUGGGAUUCACCUUCGCAGGAUGUGCAUGGAAGUAUAAACACAACGGUCGUU,...............................................................................................,[],95,srp
+tRNA_tdbR00000364-Ascaris_suum-6253-Arg-ACG,GGACGUUAAAUAGAUAAGCUAUGCCUAGUUACGGGCUGGGAAGAGAGUCGUCUUCCA,(((((.(..((((.....)))).(((((.......)))))......).)))))....,"[[1, 53], [2, 52], [3, 51], [4, 50], [5, 49], [7, 47], [10, 22], [11, 21], [12, 20], [13, 19], [24, 40], [25, 39], [26, 38], [27, 37], [28, 36]]",57,tRNA
+srp_Toxo.gond._CO743022,GGUGAGCGUAACGUCUCGCUGUCACCUGAGUGGGGGUCGUCCGUUGGUGGCAGGAGAAUCGCGCUU,(((.((((..(..)..))))....((((..)))).)))............................,"[[1, 38], [2, 37], [3, 36], [5, 20], [6, 19], [7, 18], [8, 17], [11, 14], [25, 34], [26, 33], [27, 32], [28, 31]]",66,srp

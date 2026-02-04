@@ -49,8 +49,16 @@ def load_model(config, eval=False, checkpoint_path=None):
     
     # Load Weights
     if checkpoint_path:
-        state_dict = tr.load(checkpoint_path, map_location=device)
+        ck = tr.load(checkpoint_path, map_location=device)            
+        if isinstance(ck, dict) and "model_state" in ck:
+            state_dict = ck["model_state"]
+        elif isinstance(ck, dict):
+            state_dict = ck
+        else:
+            raise ValueError("Checkpoint format not recognized")
+
         model.load_state_dict(state_dict)
+
     model.to(device)
     if eval:
         model.eval()
