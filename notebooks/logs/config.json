@@ -1,0 +1,11 @@
+{
+    "train_path": "../data/simfolds/simfolds_max128/joined/sim90/train.csv",
+    "val_path": "../data/simfolds/simfolds_max128/joined/sim90/valid.csv",
+    "log_path": "logs/",
+    "batch_size": 4,
+    "lr": 0.001,
+    "epochs": 3,
+    "timesteps": 10,
+    "profile_batches": 20,
+    "note": "simfold profiler: sim90. Archive II max 128."
+}

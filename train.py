@@ -1,17 +1,14 @@
 import torch as tr
 import numpy as np
 import pandas as pd
-import os
-import json
+import os 
 from datetime import datetime
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import time
 
 # --- PROJECT IMPORTS ---
-from src.dataset import SeqDataset, pad_batch
-from src.diffusion import DiffusionModel
-from src.layers.simpleunet import SimpleUNet
+from src.dataset import SeqDataset, pad_batch 
 from src.metrics import contact_f1
 from src.utils import save_config, load_model
 # --- UTILITIES ---
