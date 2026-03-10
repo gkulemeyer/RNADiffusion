@@ -1,0 +1,13 @@
+# @package _global_
+
+pipeline:
+  run_training: false
+  run_testing: false
+  run_ensemble_generation: true
+  run_ensemble_analysis: false
+
+ensemble:
+  batch_size: 8
+  num_workers: 2
+  num_samples: 50
+  base_seed: ${seed}

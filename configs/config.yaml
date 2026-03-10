@@ -1,0 +1,36 @@
+# configs/config.yaml
+defaults:
+  - _self_
+  - data: archiveII128_simfolds  # configs/data/archiveII128_simfolds.yaml
+  - network/wrapper: diffusion
+  - pipeline: train
+
+# Globals
+project_name: "RNADiffusion"
+seed: 42
+
+exp_name: ${project_name}
+run_name: null
+run_name_prefix: train
+
+paths:
+  workspace_root: ${hydra:runtime.cwd}
+  data_root: ${paths.workspace_root}/data
+  logs_root: ${paths.workspace_root}/logs
+  mlruns_root: ${paths.workspace_root}/mlruns
+
+mlflow:
+  experiment_name: ${exp_name}
+  tracking_uri: file:${paths.mlruns_root}
+  run_name: ${run_name}
+
+logging:
+  root: ${paths.logs_root}
+  group_name: ${project_name}
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

@@ -1,0 +1,17 @@
+# configs/data/archiveII.yaml
+name: archiveII128
+use_partitions: false
+
+# direct file paths
+train_path: ${paths.data_root}/ArchiveII_128_random_split/train.csv
+val_path: ${paths.data_root}/ArchiveII_128_random_split/val.csv
+test_path: ${paths.data_root}/ArchiveII_128_random_split/test.csv
+
+# CSV partition names
+train_partition: train
+val_partition: valid
+test_partition: test
+
+# DataLoader
+max_len: 128
+num_classes: 4 # ACGU

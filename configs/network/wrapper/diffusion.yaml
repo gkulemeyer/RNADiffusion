@@ -1,0 +1,10 @@
+# @package _global_
+
+defaults:
+  - /network/denoiser: simpleunet
+
+network:
+  wrapper:
+    name: diffusion
+    schedule: cosine
+    timesteps: 25

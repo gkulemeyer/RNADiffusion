@@ -1,0 +1,20 @@
+# configs/data/archiveII128_simfolds.yaml
+name: archiveII128
+use_partitions: true
+split: "sim80" # default {split} 
+
+# path
+main_path: ${paths.data_root}/ArchiveII_max_length_128.csv
+partition_file_template: ${paths.data_root}/simfolds/simfolds_max128/ArchiveII_partitions_${data.split}.csv
+
+# CSV partition names
+train_partition: train
+val_partition: valid
+test_partition: test
+
+# "all" or list [0, 1]
+fold_numbers: [0] 
+
+# DataLoader
+max_len: 128
+num_classes: 4 # ACGU

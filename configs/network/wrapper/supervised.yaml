@@ -1,0 +1,8 @@
+# @package _global_
+
+defaults:
+  - /network/backbone: simpleunet
+
+network:
+  wrapper:
+    name: supervised

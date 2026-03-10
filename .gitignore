@@ -1,1 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
 *.pt
+*.pth
+*.ckpt
+*.log
+logs/
+mlruns/
+outputs/
+multirun/
+.hydra/

@@ -1,0 +1,5 @@
+name: simple_unet
+params:
+  in_channels: 18
+  out_channels: 2
+  base_dim: 64

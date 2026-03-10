@@ -1,0 +1,14 @@
+# @package _global_
+
+pipeline:
+  run_training: false
+  run_testing: true
+  run_ensemble_generation: false
+  run_ensemble_analysis: false
+
+testing:
+  batch_size: 8
+  num_workers: 2
+  fallback_test_path: null
+  save_summary_csv: false
+  summary_filename: all_test_summary.csv
