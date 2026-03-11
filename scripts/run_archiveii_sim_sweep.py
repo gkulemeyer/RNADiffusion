@@ -12,7 +12,7 @@ import yaml
 # setup (edit this block)
 # ------------------------------------------------------------
 EXPERIMENT_NAME = "ArchiveII_sim_sweep"
-BASE_CONFIG_PATH = "configs/train.yaml"
+BASE_CONFIG_PATH = "configs/sim60.yaml"
 PARTITIONS = ["sim60", "sim70", "sim80", "sim90"]
 TIMESTEPS = [5, 10]
 EPOCHS = 1

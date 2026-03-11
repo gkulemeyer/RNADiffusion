@@ -17,6 +17,11 @@ The active code is intentionally small and organized around one experimental flo
 - `src/ensemble.py`: raw sample generation and ensemble statistics
 - `src/layers/simpleunet.py`: backbone network
 
+CLI wrappers:
+
+- `ensemble_generator.py`: thin wrapper over `src/ensemble.py::generate_raw_samples`
+- `ensemble_stats.py`: thin wrapper over `src/ensemble.py::evaluate_samples_dir`
+
 ## Requirements
 
 Install the runtime dependencies listed in [requirements.txt](/home/gkulemeyer/Documents/Repos/RNADiffusion/requirements.txt).
@@ -156,6 +161,7 @@ The runner loads one base config and overrides these fields per run:
 - `logging.save_dir`
 
 These scripts are for reruns and debugging. The main workflow remains `train.py`.
+Both commands are thin wrappers; ensemble logic lives in `src/ensemble.py`.
 
 ## Notes
 
