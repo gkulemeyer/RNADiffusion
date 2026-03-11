@@ -1,0 +1,9 @@
+torch
+lightning
+pandas
+numpy
+scikit-learn
+tqdm
+PyYAML
+tensorboard
+pytest

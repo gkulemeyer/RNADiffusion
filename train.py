@@ -1,205 +1,148 @@
-import torch as tr
-import numpy as np
-import pandas as pd
-import os
+import argparse
+import csv
 import json
-from datetime import datetime
-from tqdm import tqdm
-from torch.utils.data import DataLoader
-import time
+import shutil
+from pathlib import Path
 
-# --- PROJECT IMPORTS ---
-from src.dataset import SeqDataset, pad_batch
-from src.diffusion import DiffusionModel
-from src.layers.simpleunet import SimpleUNet
-from src.metrics import contact_f1
-from src.utils import save_config, load_model
-# --- UTILITIES ---
+from lightning.pytorch import Trainer
+from lightning.pytorch import seed_everything
+from lightning.pytorch.callbacks import ModelCheckpoint
 
-def get_timestamp():
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
+from src.config import load_config, prepare_experiment_config, save_config
+from src.data import RNADataModule, build_dataloader
+from src.ensemble import (
+    DEFAULT_BASE_SEED,
+    DEFAULT_CONSENSUS,
+    DEFAULT_TRIALS,
+    evaluate_samples_dir,
+    generate_raw_samples,
+)
+from src.io import (
+    build_experiment_dir,
+    build_loggers,
+    configure_logger,
+    load_model_checkpoint,
+)
+from src.train_module import RNADiffusionModule
 
-# --- CORE FUNCTIONS ---
 
-def train_one_epoch(model, loader, optimizer, device):
-    model.train()
-    epoch_loss = []
-    
-    pbar = tqdm(loader, desc="Training", leave=False)
-    
-    for batch in pbar:
-        cond = batch["outer"].to(device)
-        target = batch["contact_oh"].to(device)
-        mask = batch["mask"].to(device)       
-        
-        optimizer.zero_grad()
-        
-        # Forward pass (diffusion loss)
-        loss = model.forward_all_timesteps(target, cond, mask=mask)
-             
-        loss.backward()
-        optimizer.step()
-        
-        epoch_loss.append(loss.item())
-        pbar.set_postfix({"loss": f"{loss.item():.4f}"})
-        
-    return np.mean(epoch_loss)
-
-@tr.no_grad()
-def validate(model, loader, device):
-    """
-    Computes Validation Loss and F1 Score (via sampling).
-    """
-    model.eval()
-    val_loss = []
-    val_f1 = []
-    
-    for batch in tqdm(loader, desc="Validating", leave=False):
-        cond = batch["outer"].to(device)
-        target = batch["contact_oh"].to(device)
-        mask = batch["mask"].to(device)       
-        lens = batch["length"]
-        
-        # 1. Validation Loss (No sampling)
-        loss = model.forward_all_timesteps(target, cond, mask=mask)
-        val_loss.append(loss.item())
-        
-        # 2. Validation F1 (Sampling required)
-        samples = model._sample(cond)
-        f1_score = contact_f1(samples, target, lengths=lens, reduce=True)
-        val_f1.append(f1_score)
-        
-    return np.mean(val_loss), np.mean(val_f1)
-
-# --- EXPERIMENT RUNNER ---
-
-def run_experiment(config):
-    """
-    Runs a full training session based on the provided configuration dictionary.
-    """
-    # 1. Directory Setup
-    timestamp = get_timestamp()
-    exp_name = f"exp_T{config['timesteps']}_E{config['epochs']}_{timestamp}"
-    log_path = config["log_path"]
-    log_dir = os.path.join(log_path, exp_name)
-    os.makedirs(log_dir, exist_ok=True)
-    
-    save_config(config, log_dir)
-    
-    print(f"\n{'='*40}")
-    print(f"STARTING EXPERIMENT: {exp_name}")
-    print(f"Config: {config}")
-    print(f"{'='*40}")
-
-    device = tr.device("cuda" if tr.cuda.is_available() else "cpu")
-
-    # 2. Data Loading
-    train_ds = SeqDataset(config["train_path"])
-    val_ds = SeqDataset(config["val_path"])
-    
-    train_loader = DataLoader(
-        train_ds, 
-        batch_size=config["batch_size"], 
-        shuffle=True, 
-        collate_fn=pad_batch, 
-        num_workers=2
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train RNADiffusion with PyTorch Lightning.")
+    parser.add_argument(
+        "--config",
+        default="configs/train.yaml",
+        help="Path to a YAML config file.",
     )
-    val_loader = DataLoader(
-        val_ds, 
-        batch_size=config["batch_size"], 
-        shuffle=False, 
-        collate_fn=pad_batch, 
-        num_workers=2
-    )
-    
-    model = load_model(config=config, eval=False)
-    
-    optimizer = tr.optim.Adam(model.parameters(), lr=config["lr"])
-    
-    # 4. Training Loop
-    metrics = []
-    best_val_f1 = -1.0
-    
-    for epoch in range(1, config["epochs"] + 1):
-        start_time = time.perf_counter()
-        print(f"\nEpoch {epoch}/{config['epochs']}")
-        
-        # Train and valid
-        train_loss = train_one_epoch(model, train_loader, optimizer, device)
-        end_time = time.perf_counter()
-        
-        val_loss, val_f1 = validate(model, val_loader, device)
-        
-        # Logging
-        print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val F1: {val_f1:.4f}")
-        
-        # Update History
-        metrics.append({
-            "epoch": epoch,
-            "epoch_time": end_time - start_time,
-            "train_loss": train_loss,
-            "val_loss": val_loss,
-            "val_f1": val_f1
-        })
-        
-        # Save CSV (updates every epoch)
-        pd.DataFrame(metrics).to_csv(os.path.join(log_dir, "metrics.csv"), index=False)
-        
-        # Checkpointing
-        if val_f1 > best_val_f1:
-            best_val_f1 = val_f1
-            tr.save({
-                "epoch": epoch,
-                "model_state": model.state_dict(),
-                "optimizer_state": optimizer.state_dict(),
-                "best_val_f1": best_val_f1,
-                "config": config
-            }, os.path.join(log_dir, "best_model.pt")) 
-            print("Best Model Saved!")
-            
-    # Save latest state
-    tr.save(model.state_dict(), os.path.join(log_dir, "last_model.pt"))
+    return parser.parse_args()
 
-    print(f"Experiment finished. Logs saved to: {log_dir}")
-    return log_dir, best_val_f1
 
-def set_experiment_config(base_config, epochs=None, timesteps=None, note=""):
-    """
-    Merges base configuration with overrides for specific experiments.
-    """
-    config = base_config.copy()
-    config["epochs"] = epochs if epochs is not None else config.get("epochs", 1)
-    config["timesteps"] = timesteps if timesteps is not None else config.get("timesteps", 1)
-    config["note"] = note
-    return config
+def write_metrics_summary(metrics_path, summary_path):
+    metrics_path = Path(metrics_path)
+    summary_path = Path(summary_path)
 
-# --- ABLATION STUDY SETUP ---
-if __name__ == "__main__":
-    
-    BASE_DATA_DIR = "data/simfolds/simfolds_max128/joined/"
-    for sim in ["sim60", "sim70", "sim80", "sim90"]:
-        DATA_DIR = os.path.join(BASE_DATA_DIR, sim)
-        os.makedirs(DATA_DIR, exist_ok=True)
-                
-        base_dict = {
-            "train_path": f"{DATA_DIR}/train.csv",
-            "val_path": f"{DATA_DIR}/valid.csv",
-            "log_path": f"logs/ArchiveII_simfold_128/{sim}",
-            "batch_size": 4,
-            "lr": 1e-3
-            }
+    with metrics_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        rows = list(reader)
 
-        timestep_options = [5, 10, 15, 25]
-        note=f"simfold ablation: {sim}. Archive II max 128."
-        
-        experiment_configs = [set_experiment_config(base_dict, epochs=15, timesteps=t, note=note) 
-                            for t in timestep_options] 
+    grouped = {}
+    metric_names = []
+    for row in rows:
+        key = (row.get("epoch", ""), row.get("step", ""))
+        if key not in grouped:
+            grouped[key] = {"epoch": key[0], "step": key[1]}
 
-        print(f"Running {len(experiment_configs)} experiments.")
-        
-        for i, conf in enumerate(experiment_configs):
-            try:
-                run_experiment(conf)
-            except Exception as e:
-                print(f"ERROR in experiment {i}: {e}")
+        for metric_name, metric_value in row.items():
+            if metric_name in ("epoch", "step"):
                 continue
+            if metric_name not in metric_names:
+                metric_names.append(metric_name)
+            if metric_value not in ("", None):
+                grouped[key][metric_name] = metric_value
+
+    fieldnames = ["epoch", "step"] + metric_names
+    merged_rows = list(grouped.values())
+    with summary_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(merged_rows)
+
+
+def main():
+    args = parse_args()
+    config = load_config(args.config)
+    config = prepare_experiment_config(config)
+    experiment_dir = Path(build_experiment_dir(config))
+    config = prepare_experiment_config(config, experiment_dir)
+
+    experiment_dir.mkdir(parents=True, exist_ok=True)
+    save_config(config, experiment_dir)
+    run_logger = configure_logger(config["logging"]["train_log_path"])
+
+    seed_everything(config["experiment"]["seed"], workers=True)
+    run_logger.info("Starting experiment in %s", experiment_dir)
+    run_logger.info("Resolved config: %s", json.dumps(config, indent=2))
+
+    data_module = RNADataModule(config)
+    model = RNADiffusionModule(config)
+    loggers = build_loggers(config, experiment_dir)
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=experiment_dir / "checkpoints",
+        filename="best",
+        monitor="val_f1",
+        mode="max",
+        save_top_k=1,
+        save_last=True,
+        auto_insert_metric_name=False,
+    )
+    trainer = Trainer(
+        max_epochs=config["training"]["max_epochs"],
+        accelerator=config["training"]["accelerator"],
+        devices=config["training"]["devices"],
+        precision=config["training"]["precision"],
+        logger=loggers,
+        callbacks=[checkpoint_callback],
+        log_every_n_steps=config["logging"]["log_every_n_steps"],
+    )
+    trainer.fit(model=model, datamodule=data_module)
+
+    csv_logger = next((logger for logger in loggers if logger.__class__.__name__ == "CSVLogger"), None)
+    if csv_logger is None:
+        raise FileNotFoundError("CSVLogger not found in configured loggers")
+    source_metrics_path = Path(csv_logger.log_dir) / "metrics.csv"
+    if not source_metrics_path.exists():
+        raise FileNotFoundError(f"CSVLogger did not produce metrics.csv at {source_metrics_path}")
+    metrics_path = experiment_dir / "metrics.csv"
+    shutil.copyfile(source_metrics_path, metrics_path)
+    run_logger.info("Training metrics saved to %s", metrics_path)
+    metrics_summary_path = experiment_dir / "metrics_summary.csv"
+    write_metrics_summary(metrics_path, metrics_summary_path)
+    run_logger.info("Training metrics summary saved to %s", metrics_summary_path)
+
+    best_checkpoint = checkpoint_callback.best_model_path or checkpoint_callback.last_model_path
+    if not best_checkpoint:
+        raise FileNotFoundError("Lightning did not produce a best or last checkpoint")
+    run_logger.info("Generating ensemble samples from %s", best_checkpoint)
+
+    loader = build_dataloader(config, partition="test", shuffle=False)
+    best_model = load_model_checkpoint(config, best_checkpoint, eval_mode=True)
+    generate_raw_samples(
+        model=best_model,
+        loader=loader,
+        output_dir=config["logging"]["raw_samples_dir"],
+        base_seed=DEFAULT_BASE_SEED,
+    )
+
+    run_logger.info("Evaluating ensemble statistics")
+    ensemble_df = evaluate_samples_dir(
+        samples_dir=config["logging"]["raw_samples_dir"],
+        consensus_sizes=DEFAULT_CONSENSUS,
+        trials=DEFAULT_TRIALS,
+        seed=DEFAULT_BASE_SEED,
+    )
+    ensemble_df.to_csv(config["logging"]["ensemble_path"], index=False)
+    run_logger.info("Ensemble analysis saved to %s", config["logging"]["ensemble_path"])
+    run_logger.info("Experiment finished. Logs saved to %s", experiment_dir)
+
+
+if __name__ == "__main__":
+    main()
