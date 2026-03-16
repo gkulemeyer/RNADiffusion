@@ -25,14 +25,14 @@ from src.sweeps import (
 # ------------------------------------------------------------
 EXPERIMENT_NAME = "ArchiveII_test0"
 BASE_CONFIG_PATH = "configs/train/default.yaml"
-PARTITIONS = ["sim60", "sim70", "sim80", "sim90"]
-# PARTITIONS = ["sim60"]
+# PARTITIONS = ["sim60", "sim70", "sim80", "sim90"]
+PARTITIONS = ["sim80"]
 # TIMESTEPS = [5, 10]
 TIMESTEPS = [8] 
 
-EPOCHS = 3
+EPOCHS = 2
 FOLD = 0
-RESUME = True
+RESUME = False
 DRY_RUN = False
 RUN_NAME_TEMPLATE = "{partition}_t{timestep}"
 

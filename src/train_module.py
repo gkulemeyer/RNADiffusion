@@ -22,7 +22,7 @@ class RNADiffusionModule(L.LightningModule):
 
     def _evaluate_batch(self, batch):
         loss = self._compute_loss(batch)
-        predictions = self.model._sample(batch["conditioning"])
+        predictions = self.model.sample(batch["conditioning"])
         f1_score = contact_f1(
             predictions,
             batch["contact_one_hot"],

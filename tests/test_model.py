@@ -56,7 +56,7 @@ def test_build_model_forward_all_timesteps():
         mask=batch["mask"],
     )
     assert loss.ndim == 0
-    sample = model._sample(batch["conditioning"])
+    sample = model.sample(batch["conditioning"])
     assert sample.shape == (2, 4, 4)
 
 

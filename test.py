@@ -27,7 +27,7 @@ def evaluate_model(model, loader, device):
         loss = model.forward_all_timesteps(target, condition, mask=mask)
         results["loss"].append(loss.item())
 
-        predictions = model._sample(condition)
+        predictions = model.sample(condition)
         f1_scores = contact_f1(predictions, target, lengths=lengths, reduce=False)
         results["f1"].extend(f1_scores.cpu().tolist())
 
