@@ -121,22 +121,32 @@ def completed_epochs_from_checkpoint(checkpoint_path):
     return int(epoch) + 1
 
 
-def archive_ensemble_stats_for_epoch(experiment_dir, epoch_count, run_logger):
+def archive_epoch_artifacts(experiment_dir, epoch_count, checkpoint_path, run_logger):
     if epoch_count is None:
-        return
+        return checkpoint_path
 
     experiment_dir = Path(experiment_dir)
-    source_path = experiment_dir / "ensemble_stats.csv"
-    if not source_path.exists():
-        return
-
     archive_dir = experiment_dir / f"epoch_{epoch_count}"
     archive_dir.mkdir(parents=True, exist_ok=True)
-    target_path = archive_dir / "ensemble_stats.csv"
-    if target_path.exists():
-        target_path.unlink()
-    shutil.move(str(source_path), target_path)
-    run_logger.info("Archived previous ensemble summary stats to %s", target_path)
+
+    stats_path = experiment_dir / "ensemble_stats.csv"
+    if stats_path.exists():
+        archived_stats_path = archive_dir / "ensemble_stats.csv"
+        if archived_stats_path.exists():
+            archived_stats_path.unlink()
+        shutil.move(str(stats_path), archived_stats_path)
+        run_logger.info("Archived previous ensemble summary stats to %s", archived_stats_path)
+
+    checkpoint_path = Path(checkpoint_path)
+    if checkpoint_path.exists():
+        archived_checkpoint_path = archive_dir / checkpoint_path.name
+        if archived_checkpoint_path.exists():
+            archived_checkpoint_path.unlink()
+        shutil.move(str(checkpoint_path), archived_checkpoint_path)
+        run_logger.info("Archived previous last checkpoint to %s", archived_checkpoint_path)
+        return archived_checkpoint_path
+
+    return checkpoint_path
 
 
 def build_experiment_dir(config):
@@ -279,7 +289,12 @@ def run_experiment(config, experiment_dir=None, resume_from_checkpoint=None):
     config, experiment_dir, run_logger = prepare_run(config, experiment_dir=experiment_dir)
     if resume_from_checkpoint is not None:
         completed_epochs = completed_epochs_from_checkpoint(resume_from_checkpoint)
-        archive_ensemble_stats_for_epoch(experiment_dir, completed_epochs, run_logger)
+        resume_from_checkpoint = archive_epoch_artifacts(
+            experiment_dir,
+            completed_epochs,
+            resume_from_checkpoint,
+            run_logger,
+        )
     checkpoint_path = train_run(
         config,
         experiment_dir,

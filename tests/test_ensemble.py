@@ -2,7 +2,7 @@ from pathlib import Path
 
 import yaml
 
-from src.experiment import archive_ensemble_stats_for_epoch
+from src.experiment import archive_epoch_artifacts
 from src.io import load_samples_metadata, write_ensemble_metadata, write_samples_metadata
 
 
@@ -80,19 +80,32 @@ def test_evaluate_samples_stats_writes_expected_summary(tmp_path: Path):
     assert stats["consensus"].tolist() == [1, 3]
 
 
-def test_archive_ensemble_stats_for_epoch_moves_current_summary(tmp_path: Path):
+def test_archive_epoch_artifacts_moves_summary_and_checkpoint(tmp_path: Path):
     experiment_dir = tmp_path / "run"
-    experiment_dir.mkdir()
+    checkpoint_dir = experiment_dir / "checkpoints"
+    checkpoint_dir.mkdir(parents=True)
     source_path = experiment_dir / "ensemble_stats.csv"
     source_path.write_text("consensus,mean\n1,0.5\n", encoding="utf-8")
+    checkpoint_path = checkpoint_dir / "last.ckpt"
+    checkpoint_path.write_text("checkpoint", encoding="utf-8")
 
     class DummyLogger:
         def info(self, *args, **kwargs):
             return None
 
-    archive_ensemble_stats_for_epoch(experiment_dir, 2, DummyLogger())
+    archived_checkpoint = archive_epoch_artifacts(
+        experiment_dir,
+        2,
+        checkpoint_path,
+        DummyLogger(),
+    )
 
     archived_path = experiment_dir / "epoch_2" / "ensemble_stats.csv"
+    archived_checkpoint_path = experiment_dir / "epoch_2" / "last.ckpt"
     assert archived_path.exists()
     assert archived_path.read_text(encoding="utf-8") == "consensus,mean\n1,0.5\n"
+    assert archived_checkpoint == archived_checkpoint_path
+    assert archived_checkpoint_path.exists()
+    assert archived_checkpoint_path.read_text(encoding="utf-8") == "checkpoint"
     assert not source_path.exists()
+    assert not checkpoint_path.exists()

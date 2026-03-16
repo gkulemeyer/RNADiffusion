@@ -30,9 +30,9 @@ PARTITIONS = ["sim60", "sim70", "sim80", "sim90"]
 # TIMESTEPS = [5, 10]
 TIMESTEPS = [8] 
 
-EPOCHS = 10
+EPOCHS = 3
 FOLD = 0
-RESUME = False
+RESUME = True
 DRY_RUN = False
 RUN_NAME_TEMPLATE = "{partition}_t{timestep}"
 
