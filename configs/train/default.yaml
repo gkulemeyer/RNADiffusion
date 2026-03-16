@@ -1,0 +1,30 @@
+experiment:
+  name: ""
+  note: "Base RNADiffusion training config"
+  seed: 42
+
+data:
+  base_path: "data/ArchiveII_max_length_128.csv"
+  partition_path: "data/others/ArchiveII_splits.csv"
+  fold: 0
+
+model:
+  timesteps: 5
+  num_classes: 2
+  in_channels: 18
+  out_channels: 2
+  base_dim: 64
+
+training:
+  max_epochs: 10
+  batch_size: 4
+  lr: 0.001
+  num_workers: 2
+  accelerator: "auto"
+  devices: 1
+  precision: 32
+
+logging:
+  save_dir: "logs/RNADiffusion"
+  tensorboard: true
+  log_every_n_steps: 1

@@ -53,7 +53,7 @@ class DiffusionModel(nn.Module):
         # 2. Registramos los buffers con shape (T, 1, 1, 1)
         # Esto permite multiplicar directo por imágenes [B, C, H, W] sin hacer .view() en cada forward
         betas, alphas, alphas_bar, one_minus_alphas_bar = get_schedule(time_steps, cosine_betas)
-        self.register_buffer("one_minus_alphas", one_minus_alphas_bar)
+        self.register_buffer("one_minus_alphas", 1 - alphas)
         self.register_buffer("alphas", alphas)
         self.register_buffer("alphas_bar", alphas_bar)
         self.register_buffer("one_minus_alphas_bar", one_minus_alphas_bar)

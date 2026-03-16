@@ -1,122 +1,62 @@
-import os
-import sys 
-import torch as tr
-import numpy as np
-import pandas as pd
-import random 
-from tqdm import tqdm
-sys.path.append("../")
+import argparse
+from pathlib import Path
 
-import torch as tr
-import numpy as np
-from sklearn.metrics import f1_score
+from src.config import load_ensemble_defaults
+from src.ensemble import evaluate_samples_dir, evaluate_samples_stats
+from src.io import write_ensemble_metadata
 
-class SeqEnsemble:
-    def __init__(self, data_path):
-        """Loads the raw ensemble results of a model."""
-        self.data = tr.load(data_path)
-        self.samples = self.data["samples"].float() # [N, L, L] 
-        self.seeds = self.data["seeds"]
-        self.target = self.data["target"]
-        self.length = self.data["length"]
-        self.num_avail_samples = len(self.samples)
-        self.path = data_path 
-        if self.target.ndim == 3: self.target = self.target.argmax(dim=0)
-        self.target_np = self.target.numpy()
 
-    def evaluate_consensus(self, indices=None):
-        """
-        Calculates the consensus using ONLY the specified indices.
-        If indices is None, uses all.
-        """
-        if indices is None:
-            subset = self.samples
-        else:
-            subset = self.samples[indices]
-        
-        prob_map = subset.mean(dim=0) # n_consensus avg
-        consensus = (prob_map > 0.5).numpy().astype(int)   # the strategy is 0.5     
-        return consensus    
+ENSEMBLE_DEFAULTS = load_ensemble_defaults()
 
-    def get_uncertainty_map(self, indices=None):
-        """Return the std dev ."""
-        subset = self.samples if indices is None else self.samples[indices]
-        return subset.std(dim=0).numpy()
-    
-    def _compute_f1(self, pred_matrix):
-        L = int(self.length)
-        rows, cols = np.triu_indices(L, k=1)
-        p_flat = pred_matrix[:L, :L][rows, cols]
-        r_flat = self.target_np[:L, :L][rows, cols]
-        return f1_score(r_flat, p_flat, zero_division=0)
 
-    def evaluate_single_seed(self, seed_idx):
-        """Evalúa solo la muestra correspondiente a un índice (0 a N-1)."""
-        pred = self.samples[seed_idx].numpy()
-        return self._compute_f1(pred)
-    
-    def evaluate_consensus_f1(self, indices=None): 
-        consensus = self.evaluate_consensus(indices)
-        return self._compute_f1(consensus)
-        
+def default_stats_output_path(output_path):
+    output_path = Path(output_path)
+    if output_path.name == "ensemble.csv":
+        return output_path.with_name("ensemble_stats.csv")
+    return output_path.with_name(f"{output_path.stem}_stats.csv")
 
-def evaluate_rna_k_consensus(rna, chosen_seeds):
-    row = {"seq_id": rna.path.split("/")[-1].replace(".pt","")} 
-    for k in N_CONSENSUS:
-        f1_list = []
-        for idx in chosen_seeds[k]: 
-            f1_list.append(rna.evaluate_consensus_f1(indices=idx))
-        
-        row[f"cons_k{k}_mean"] = np.mean(f1_list)
-        row[f"cons_k{k}_std"]  = np.std(f1_list)
-    return row
 
-###################################################################
-#######################      MAIN       ###########################
-
-# LOGS_PATH = "logs/"
-TRIALS = 20
-N_CONSENSUS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,13, 14, 15, 20, 25]    
-BASE_LOG = "logs/ArchiveII_simfold_128/" 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Evaluate ensemble statistics from raw samples.")
+    parser.add_argument("--samples-dir", required=True, help="Directory containing *.pt sample files")
+    parser.add_argument("--output", default="", help="Optional CSV output path")
+    parser.add_argument("--trials", type=int, default=ENSEMBLE_DEFAULTS["trials"], help="Number of consensus trials")
+    parser.add_argument(
+        "--consensus",
+        default=",".join(str(value) for value in ENSEMBLE_DEFAULTS["consensus_sizes"]),
+        help="Comma-separated consensus sizes",
+    )
+    parser.add_argument("--seed", type=int, default=ENSEMBLE_DEFAULTS["base_seed"], help="Random seed for consensus sampling")
+    return parser.parse_args()
 
 
 def main():
-    for sim in ["sim60/", "sim70/", "sim80/", "sim90/"]:
-        LOGS_PATH = os.path.join(BASE_LOG, sim)  
-        
-        ALL_EXPS = [
-            exp for exp in os.listdir(LOGS_PATH) 
-            if not exp.endswith(".csv")
-                    ]
-        for exp_dir in ALL_EXPS:
-            
-            exp_dir = LOGS_PATH + exp_dir + "/"
-            samples = exp_dir + "raw_samples"
-            print(f"Executing {exp_dir}")
-            
-            paths = [os.path.join(samples, f) 
-                    for f in os.listdir(samples) if f.endswith(".pt")]
-            paths.sort()
-            
-            test_ensemble = [SeqEnsemble(p) for p in tqdm(paths, desc="Loading")] 
-            max_samples = min([ens.num_avail_samples for ens in test_ensemble])
+    args = parse_args()
+    consensus_sizes = [int(value) for value in args.consensus.split(",") if value]
+    samples_dir = Path(args.samples_dir)
+    output_path = Path(args.output) if args.output else samples_dir.parent / "ensemble.csv"
 
-            ### Choose the #Trial seeds to use for the each N_consensus
-            chosen_seeds = {}
-            for k in N_CONSENSUS:
-                chosen_seeds[k] = [
-                    random.sample(range(max_samples), k)
-                    for _ in range(TRIALS)
-                ]
-                    
-            all_stats = []
-            for rna_samples in tqdm(test_ensemble, desc="Evaluating"):
-                row = evaluate_rna_k_consensus(rna_samples, chosen_seeds)
-                all_stats.append(row)
+    stats = evaluate_samples_dir(
+        samples_dir=str(samples_dir),
+        consensus_sizes=consensus_sizes,
+        trials=args.trials,
+        seed=args.seed,
+    )
+    stats.to_csv(output_path, index=False)
 
-            df_stats = pd.DataFrame(all_stats) 
-            df_stats.to_csv(exp_dir + f"enemble_stats_{TRIALS}_trials.csv")     
-        
+    summary_stats = evaluate_samples_stats(output_path, consensus_sizes=consensus_sizes)
+    stats_output_path = default_stats_output_path(output_path)
+    summary_stats.to_csv(stats_output_path, index=False)
+
+    write_ensemble_metadata(
+        output_path=output_path,
+        samples_dir=samples_dir,
+        trials=args.trials,
+        consensus_sizes=consensus_sizes,
+        seed=args.seed,
+    )
+    print(f"Saved ensemble statistics to {output_path}")
+    print(f"Saved ensemble summary stats to {stats_output_path}")
 
 if __name__ == "__main__":
     main()

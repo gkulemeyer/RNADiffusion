@@ -1,0 +1,16 @@
+num_samples: 50
+base_seed: 42
+trials: 20
+consensus_sizes:
+  - 1
+  - 3
+  - 5
+  - 7
+  - 9
+  - 11
+  - 13
+  - 15
+  - 19
+  - 21
+  - 25
+chunk_size: 25
