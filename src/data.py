@@ -143,7 +143,7 @@ class SeqDataset(Dataset):
         length = len(sequence)
 
         contact = bp2matrix(length, self.base_pairs[index])
-        contact_one_hot = F.one_hot(contact.long(), num_classes=2).float().permute(2, 0, 1)
+        contact_oh = F.one_hot(contact.long(), num_classes=2).float().permute(2, 0, 1)
         embedding = self.embedding.seq2emb(sequence)
         conditioning = self.embedding.outer_emb(embedding)
 
@@ -154,7 +154,7 @@ class SeqDataset(Dataset):
             "embedding": embedding,
             "conditioning": conditioning,
             "contact": contact,
-            "contact_oh": contact_one_hot,
+            "contact_oh": contact_oh,
         }
 
 ##  (REQUIRES base_pairs or dot-bracket column)

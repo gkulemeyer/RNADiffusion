@@ -38,10 +38,10 @@ def make_config():
 
 def make_batch():
     contacts = torch.randint(0, 2, (2, 4, 4))
-    contact_one_hot = torch.nn.functional.one_hot(contacts, num_classes=2).permute(0, 3, 1, 2).float()
+    contact_oh = torch.nn.functional.one_hot(contacts, num_classes=2).permute(0, 3, 1, 2).float()
     return {
         "conditioning": torch.randn(2, 16, 4, 4),
-        "contact_one_hot": contact_one_hot,
+        "contact_oh": contact_oh,
         "mask": torch.ones(2, 1, 4, 4),
         "length": [4, 4],
     }
@@ -51,7 +51,7 @@ def test_build_model_forward_all_timesteps():
     model = build_model(make_config())
     batch = make_batch()
     loss = model.forward_all_timesteps(
-        batch["contact_one_hot"],
+        batch["contact_oh"],
         batch["conditioning"],
         mask=batch["mask"],
     )

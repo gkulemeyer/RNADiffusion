@@ -45,7 +45,7 @@ class SequenceEnsemble:
         targets = self.target.unsqueeze(0).expand(preds.shape[0], -1, -1)
         return contact_f1_gpu(preds, targets, lengths=[self.length] * len(preds), reduce=False).tolist()
 
-def _sample_batch(model, conditioning, num_samples, base_seed, chunk_size):
+def _sample_batch(model, conditioning, mask, num_samples, base_seed, chunk_size):
     batch_size = conditioning.shape[0]
     chunks = []
     generated = 0
@@ -54,9 +54,10 @@ def _sample_batch(model, conditioning, num_samples, base_seed, chunk_size):
         current_chunk = min(chunk_size, num_samples - generated)
         tr.manual_seed(base_seed + generated)
         expanded_conditioning = conditioning.repeat_interleave(current_chunk, dim=0)
+        expanded_mask = mask.repeat_interleave(current_chunk, dim=0)
 
         with tr.no_grad():
-            sampled = model.sample(expanded_conditioning)
+            sampled = model.sample(expanded_conditioning, mask=expanded_mask)
 
         if sampled.ndim == 4:
             sampled = sampled.argmax(dim=1)
@@ -100,7 +101,7 @@ def generate_raw_samples(model, loader, output_dir, num_samples, base_seed, chun
                 {
                     "samples": sampled[i],
                     "seeds": seeds,
-                    "target": batch["contact_one_hot"][batch_index].cpu().to(tr.int8),
+                    "target": batch["contact_oh"][batch_index].cpu().to(tr.int8),
                     "length": int(batch["length"][batch_index]),
                 },
                 save_paths[batch_index],

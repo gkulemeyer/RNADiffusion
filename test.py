@@ -20,14 +20,14 @@ def evaluate_model(model, loader, device):
 
     for batch in tqdm(loader, desc="Testing", leave=False):
         condition = batch["conditioning"].to(device)
-        target = batch["contact_one_hot"].to(device)
+        target = batch["contact_oh"].to(device)
         mask = batch["mask"].to(device)
         lengths = batch["length"]
 
         loss = model.forward_all_timesteps(target, condition, mask=mask)
         results["loss"].append(loss.item())
 
-        predictions = model.sample(condition)
+        predictions = model.sample(condition, mask=mask)
         f1_scores = contact_f1(predictions, target, lengths=lengths, reduce=False)
         results["f1"].extend(f1_scores.cpu().tolist())
 
