@@ -20,37 +20,31 @@ class RNADiffusionModule(L.LightningModule):
             mask=batch["mask"],
         )
 
+    def _evaluate_batch(self, batch):
+        loss = self._compute_loss(batch)
+        predictions = self.model._sample(batch["conditioning"])
+        f1_score = contact_f1(
+            predictions,
+            batch["contact_one_hot"],
+            lengths=batch["length"],
+            reduce=True,
+        )
+        f1_tensor = tr.tensor(f1_score, device=self.device)
+        return loss, f1_tensor
+
     def training_step(self, batch, _batch_idx):
         loss = self._compute_loss(batch)
         self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch, _batch_idx):
-        loss = self._compute_loss(batch)
-        predictions = self.model._sample(batch["conditioning"])
-        f1_score = contact_f1(
-            predictions,
-            batch["contact_one_hot"],
-            lengths=batch["length"],
-            reduce=True,
-        )
-        f1_tensor = tr.tensor(f1_score, device=self.device)
-
+        loss, f1_tensor = self._evaluate_batch(batch)
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val_f1", f1_tensor, on_step=False, on_epoch=True, prog_bar=True)
         return {"val_loss": loss, "val_f1": f1_tensor}
 
     def test_step(self, batch, _batch_idx):
-        loss = self._compute_loss(batch)
-        predictions = self.model._sample(batch["conditioning"])
-        f1_score = contact_f1(
-            predictions,
-            batch["contact_one_hot"],
-            lengths=batch["length"],
-            reduce=True,
-        )
-        f1_tensor = tr.tensor(f1_score, device=self.device)
-
+        loss, f1_tensor = self._evaluate_batch(batch)
         self.log("test_loss", loss, on_step=False, on_epoch=True)
         self.log("test_f1", f1_tensor, on_step=False, on_epoch=True)
         return {"test_loss": loss, "test_f1": f1_tensor}

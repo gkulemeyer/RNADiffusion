@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from src.config import load_config, prepare_experiment_config
+from src.config import (
+    load_config,
+    load_ensemble_defaults,
+    load_train_defaults,
+    prepare_experiment_config,
+)
 
 
 def test_load_yaml_config(tmp_path: Path):
@@ -26,6 +31,7 @@ def test_load_yaml_config(tmp_path: Path):
     config = load_config(str(config_path))
     assert config["experiment"]["name"] == "test"
     assert config["training"]["batch_size"] == 4
+    assert config["ensemble"]["num_samples"] == 50
 
 
 def test_prepare_experiment_config_adds_metadata(tmp_path: Path):
@@ -51,6 +57,8 @@ def test_prepare_experiment_config_adds_metadata(tmp_path: Path):
     assert prepared["experiment"]["uuid"]
     assert prepared["experiment"]["timestamp"]
     assert prepared["logging"]["ensemble_path"].endswith("ensemble.csv")
+    assert prepared["logging"]["ensemble_metadata_path"].endswith("ensemble_metadata.yaml")
+    assert prepared["logging"]["lightning_dir"].endswith("lightning")
 
 
 def test_load_config_keeps_invalid_values_without_strict_validation(tmp_path: Path):
@@ -80,3 +88,15 @@ def test_load_config_missing_path_raises(tmp_path: Path):
     missing_path = tmp_path / "does-not-exist.yaml"
     with pytest.raises(FileNotFoundError):
         load_config(str(missing_path))
+
+
+def test_load_train_defaults_from_configs():
+    defaults = load_train_defaults()
+    assert defaults["training"]["batch_size"] == 4
+    assert defaults["model"]["timesteps"] == 5
+
+
+def test_load_ensemble_defaults_from_configs():
+    defaults = load_ensemble_defaults()
+    assert defaults["num_samples"] == 50
+    assert defaults["consensus_sizes"] == [1, 3, 5, 7, 9, 11, 13, 15, 19, 21, 25]

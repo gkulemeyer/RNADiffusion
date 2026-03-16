@@ -66,3 +66,11 @@ def test_train_module_validation_step():
     outputs = module.validation_step(batch, 0)
     assert "val_loss" in outputs
     assert "val_f1" in outputs
+
+
+def test_train_module_test_step():
+    module = RNADiffusionModule(make_config())
+    batch = make_batch()
+    outputs = module.test_step(batch, 0)
+    assert "test_loss" in outputs
+    assert "test_f1" in outputs

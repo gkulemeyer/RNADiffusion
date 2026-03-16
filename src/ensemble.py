@@ -6,27 +6,44 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch as tr
-from sklearn.metrics import f1_score
+from src.metrics import contact_f1_gpu
 from tqdm import tqdm
 
+class SequenceEnsemble:
+    def __init__(self, data_path):
+        self.path = Path(data_path)
+        self.data = tr.load(self.path, map_location="cpu")
+        self.samples = self.data["samples"].float()
+        self.target = self.data["target"]
+        self.length = int(self.data["length"])
+        self.seeds = self.data.get("seeds", [])
+        self.num_samples = len(self.samples)
 
-DEFAULT_NUM_SAMPLES = 50
-DEFAULT_BASE_SEED = 42
-DEFAULT_TRIALS = 20
-DEFAULT_CONSENSUS = [1, 3, 5, 7, 9, 11, 13, 15, 19, 21, 25]
-DEFAULT_SAMPLE_CHUNK_SIZE = 25
+        if self.target.ndim == 3:
+            self.target = self.target.argmax(dim=0)
 
+    def consensus(self, indices=None):
+        """Calculates consensus using 0.5 threshold. Returns a Float Tensor."""
+        subset = self.samples if indices is None else self.samples[indices]
+        return (subset.mean(dim=0) > 0.5).float()
 
-def _to_contact_map(sample_batch):
-    if sample_batch.ndim == 4:
-        sample_batch = sample_batch.argmax(dim=1)
-    elif sample_batch.ndim == 2:
-        sample_batch = sample_batch.unsqueeze(0)
+    def uncertainty(self, indices=None):
+        """Returns uncertainty map (standard deviation). Returns a Float Tensor."""
+        subset = self.samples if indices is None else self.samples[indices]
+        return subset.std(dim=0).float()
+    
+    def consensus_f1(self, indices=None):
+        consensus = self.consensus(indices).unsqueeze(0)
+        target = self.target.unsqueeze(0)
+        return contact_f1_gpu(consensus, target, lengths=[self.length], reduce=True)
 
-    if sample_batch.ndim != 3:
-        raise ValueError(f"Unexpected sampled tensor shape: {tuple(sample_batch.shape)}")
-    return sample_batch
+    def consensus_f1_trials(self, indices_matrix):
+        index_tensor = tr.tensor(indices_matrix, dtype=tr.long)
+        subsets = self.samples[index_tensor]
+        preds = (subsets.mean(dim=1) > 0.5).float()
 
+        targets = self.target.unsqueeze(0).expand(preds.shape[0], -1, -1)
+        return contact_f1_gpu(preds, targets, lengths=[self.length] * len(preds), reduce=False).tolist()
 
 def _sample_batch(model, conditioning, num_samples, base_seed, chunk_size):
     batch_size = conditioning.shape[0]
@@ -40,7 +57,14 @@ def _sample_batch(model, conditioning, num_samples, base_seed, chunk_size):
 
         with tr.no_grad():
             sampled = model._sample(expanded_conditioning)
-        sampled = _to_contact_map(sampled)
+
+        if sampled.ndim == 4:
+            sampled = sampled.argmax(dim=1)
+        elif sampled.ndim == 2:
+            sampled = sampled.unsqueeze(0)
+        if sampled.ndim != 3:
+            raise ValueError(f"Unexpected sampled tensor shape: {tuple(sampled.shape)}")
+
         sampled = sampled.reshape(batch_size, current_chunk, sampled.shape[-2], sampled.shape[-1])
         chunks.append(sampled.cpu().to(tr.int8))
         generated += current_chunk
@@ -48,14 +72,7 @@ def _sample_batch(model, conditioning, num_samples, base_seed, chunk_size):
     return tr.cat(chunks, dim=1)
 
 
-def generate_raw_samples(
-    model,
-    loader,
-    output_dir,
-    num_samples=DEFAULT_NUM_SAMPLES,
-    base_seed=DEFAULT_BASE_SEED,
-    chunk_size=DEFAULT_SAMPLE_CHUNK_SIZE,
-):
+def generate_raw_samples(model, loader, output_dir, num_samples, base_seed, chunk_size):
     model.eval()
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -78,56 +95,16 @@ def generate_raw_samples(
             chunk_size=chunk_size,
         )
 
-        for local_index, batch_index in enumerate(pending_indices):
+        for i, batch_index in enumerate(pending_indices):
             tr.save(
                 {
-                    "samples": sampled[local_index],
+                    "samples": sampled[i],
                     "seeds": seeds,
                     "target": batch["contact_one_hot"][batch_index].cpu().to(tr.int8),
                     "length": int(batch["length"][batch_index]),
                 },
                 save_paths[batch_index],
             )
-
-
-class SequenceEnsemble:
-    def __init__(self, data_path):
-        self.path = Path(data_path)
-        self.payload = tr.load(self.path, map_location="cpu")
-        self.samples = self.payload["samples"].float()
-        self.target = self.payload["target"]
-        self.length = int(self.payload["length"])
-        self.seeds = self.payload.get("seeds", [])
-        self.num_samples = len(self.samples)
-
-        if self.target.ndim == 3:
-            self.target = self.target.argmax(dim=0)
-        self.target_array = self.target.numpy()
-        self.rows, self.cols = np.triu_indices(self.length, k=1)
-        self.target_vector = self.target_array[: self.length, : self.length][self.rows, self.cols]
-
-    def consensus(self, indices=None):
-        subset = self.samples if indices is None else self.samples[indices]
-        return (subset.mean(dim=0) > 0.5).numpy().astype(int)
-
-    def f1(self, matrix):
-        predicted = matrix[: self.length, : self.length][self.rows, self.cols]
-        return f1_score(self.target_vector, predicted, zero_division=0)
-
-    def consensus_f1(self, indices=None):
-        return self.f1(self.consensus(indices))
-
-    def consensus_f1_trials(self, indices_matrix):
-        index_tensor = tr.tensor(indices_matrix, dtype=tr.long)
-        subsets = self.samples[index_tensor]
-        consensuses = (subsets.mean(dim=1) > 0.5).cpu().numpy().astype(int)
-
-        scores = []
-        for consensus in consensuses:
-            predicted = consensus[: self.length, : self.length][self.rows, self.cols]
-            scores.append(f1_score(self.target_vector, predicted, zero_division=0))
-        return scores
-
 
 def evaluate_samples_dir(samples_dir, consensus_sizes, trials, seed=42):
     random.seed(seed)
@@ -163,3 +140,33 @@ def evaluate_samples_dir(samples_dir, consensus_sizes, trials, seed=42):
         rows.append(row)
 
     return pd.DataFrame(rows)
+
+
+def evaluate_samples_stats(samples_csv, consensus_sizes):
+    df = Path(samples_csv)
+    if not df.exists():
+        raise ValueError(f"CSV file {samples_csv} does not exist.")
+    df = pd.read_csv(df)
+    
+    metrics = {
+        "consensus": [],
+        "mean": [],
+        "std": [],
+        "std_mean": [],
+        "std_std": [],
+    }
+    for size in consensus_sizes:
+        mean_col = f"cons_k{size}_mean"
+        std_col = f"cons_k{size}_std"
+        mean = df[mean_col].mean()
+        std = df[mean_col].std()
+        std_mean = df[std_col].mean()
+        std_std = df[std_col].std()
+        
+        metrics["consensus"].append(size)
+        metrics["mean"].append(mean)
+        metrics["std"].append(std)
+        metrics["std_mean"].append(std_mean)
+        metrics["std_std"].append(std_std)
+
+    return pd.DataFrame(metrics, columns=["consensus", "mean", "std", "std_mean", "std_std"])

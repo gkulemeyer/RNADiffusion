@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from src.embeddings import OneHotEmbedding
 
-
+#### Load as a contact map
 MATCHING_BRACKETS = [
     ["(", ")"],
     ["[", "]"],
@@ -60,6 +60,8 @@ def dot2bp(structure):
             base_pairs.extend(parsed)
     return list(sorted(base_pairs))
 
+
+### Load as a dataset with partitioning
 
 def _load_partitioned_data(main_path, partition_path, partition_value, fold_number=None):
     """Load the main dataset filtered by partition and optional fold."""
@@ -110,7 +112,7 @@ def _load_partitioned_data(main_path, partition_path, partition_value, fold_numb
 
 load_partitioned_data = _load_partitioned_data
 
-
+### Dataset and dataloader for training and evaluation
 class SeqDataset(Dataset):
     def __init__(self, base_path, partition_path, partition_value, fold_number=None):
         data = _load_partitioned_data(
@@ -155,7 +157,7 @@ class SeqDataset(Dataset):
             "contact_one_hot": contact_one_hot,
         }
 
-
+##  (REQUIRES base_pairs or dot-bracket column)
 def _ensure_base_pairs_column(dataframe):
     if "base_pairs" in dataframe.columns:
         if dataframe["base_pairs"].isna().any():
