@@ -56,7 +56,7 @@ def _sample_batch(model, conditioning, num_samples, base_seed, chunk_size):
         expanded_conditioning = conditioning.repeat_interleave(current_chunk, dim=0)
 
         with tr.no_grad():
-            sampled = model._sample(expanded_conditioning)
+            sampled = model.sample(expanded_conditioning)
 
         if sampled.ndim == 4:
             sampled = sampled.argmax(dim=1)

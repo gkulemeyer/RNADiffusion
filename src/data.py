@@ -153,8 +153,8 @@ class SeqDataset(Dataset):
             "length": length,
             "embedding": embedding,
             "conditioning": conditioning,
-            "contact_map": contact,
-            "contact_one_hot": contact_one_hot,
+            "contact": contact,
+            "contact_oh": contact_one_hot,
         }
 
 ##  (REQUIRES base_pairs or dot-bracket column)
@@ -190,40 +190,44 @@ def _ensure_base_pairs_column(dataframe):
     copy_dataframe["base_pairs"] = base_pairs
     return copy_dataframe
 
-
 def pad_batch(batch):
-    lengths = [item["length"] for item in batch]
-    padded_length = math.ceil(max(lengths) / 4) * 4
+    """Batch is a dictionary with different variable lists."""
 
-    batch_size = len(batch)
-    embedding_channels = batch[0]["embedding"].shape[0]
-    conditioning_channels = batch[0]["conditioning"].shape[0]
+    L = [b["length"] for b in batch]
+    raw_max_len = max(L)
+    # Ceil max length to a multiple of 4 to keep downsampling valid.
+    max_len = math.ceil(raw_max_len / 4) * 4 
+    embedding_pad = tr.full((len(batch), batch[0]["embedding"].shape[0], max_len), float('nan')) 
+    conditioning_pad = tr.full((len(batch), batch[0]["conditioning"].shape[0], max_len, max_len), float('nan'))# mask (B, 1, L, L)
+    mask_pad = tr.zeros((len(batch), 1, max_len, max_len), dtype=tr.bool)
 
-    embedding_pad = tr.zeros((batch_size, embedding_channels, padded_length))
-    conditioning_pad = tr.zeros((batch_size, conditioning_channels, padded_length, padded_length))
-    contact_map_pad = -tr.ones((batch_size, padded_length, padded_length), dtype=tr.long)
-    contact_one_hot_pad = -tr.ones((batch_size, 2, padded_length, padded_length), dtype=tr.long)
-    mask_pad = tr.zeros((batch_size, 1, padded_length, padded_length))
+    if batch[0]["contact"] is None:
+        contact_pad = None
+        contact_oh_pad = None
+    else: 
+        # make nan padding
+        contact_pad = tr.full((len(batch), max_len, max_len), float('nan'))
+        contact_oh_pad = tr.full((len(batch), 2, max_len, max_len), float('nan'))
 
-    for index, item in enumerate(batch):
-        length = item["length"]
-        embedding_pad[index, :, :length] = item["embedding"]
-        conditioning_pad[index, :, :length, :length] = item["conditioning"]
-        contact_map_pad[index, :length, :length] = item["contact_map"]
-        contact_one_hot_pad[index, :, :length, :length] = item["contact_one_hot"]
-        mask_pad[index, :, :length, :length] = 1.0
+    for k in range(len(batch)):
+        embedding_pad[k, :, : L[k]] = batch[k]["embedding"]
+        conditioning_pad[k, :, : L[k], : L[k]] = batch[k]["conditioning"]
 
-    return {
-        "id": [item["id"] for item in batch],
-        "sequence": [item["sequence"] for item in batch],
-        "length": lengths,
-        "embedding": embedding_pad,
-        "conditioning": conditioning_pad,
-        "contact_map": contact_map_pad,
-        "contact_one_hot": contact_one_hot_pad,
-        "mask": mask_pad,
-    }
+        mask_pad[k, :, :L[k], :L[k]] = True
+        if contact_pad is not None:
+            contact_pad[k, : L[k], : L[k]] = batch[k]["contact"]
+            contact_oh_pad[k, :, : L[k], : L[k]] = batch[k]["contact_oh"]
 
+    out_batch = {"id": [b["id"] for b in batch],
+                 "sequence": [b["sequence"] for b in batch],
+                 "length": L,
+                 "embedding": embedding_pad,
+                 "conditioning": conditioning_pad,
+                 "contact": contact_pad,
+                 "contact_oh": contact_oh_pad,
+                 "mask": mask_pad}
+
+    return out_batch
 
 def build_dataloader(config, partition, batch_size=None, shuffle=False):
     data_config = config["data"]

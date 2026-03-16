@@ -59,6 +59,20 @@ class DiffusionModel(nn.Module):
         self.register_buffer("one_minus_alphas_bar", one_minus_alphas_bar)
         
         # buffer de Lt para nll estocastico VER
+
+    def _prepare_backbone_inputs(self, xt_input, condition, mask=None):
+        if mask is None:
+            return xt_input, condition
+
+        xt_fill = tr.zeros_like(xt_input)
+        xt_fill[:, 0, :, :] = 1.0
+        valid_xt = mask.expand_as(xt_input)
+        valid_cond = mask.expand_as(condition)
+
+        xt_backbone = tr.where(valid_xt, xt_input, xt_fill)
+        cond_backbone = tr.where(valid_cond, condition, tr.zeros_like(condition))
+        return xt_backbone, cond_backbone
+    
     
     def q_pred(self, x0, t):
         """ Dada una imagen x0 y un tiempo t, obtiene q(xt|x0)
@@ -134,12 +148,13 @@ class DiffusionModel(nn.Module):
         posterior = posterior / (posterior.sum(dim=1, keepdim=True) + 1e-8)
         return posterior 
         
-    def predict_start(self, xt, t, condition, return_logits=False): 
-            if xt.dim() == 4: # [B, C, H, W] -> Gumbel
+    def predict_start(self, xt, t, condition, mask=None, return_logits=False):
+            if xt.dim() == 4:
                 xt_input = xt
-            else: # [B, H, W] ->  One-Hot
+            else:
                 xt_input = F.one_hot(xt, num_classes=self.num_classes).permute(0, 3, 1, 2).float()
-                
+
+            xt_input, condition = self._prepare_backbone_inputs(xt_input, condition, mask=mask)
             unet_input = tr.cat([xt_input, condition], dim=1)
             out = self.diffuser(unet_input, t)
 
@@ -147,25 +162,27 @@ class DiffusionModel(nn.Module):
                 return out
             return F.softmax(out, dim=1)
     
-    def pred_p_xt_1_from_xt(self, xt, t, condition):
-        pred = self.predict_start(xt, t, condition)  
+    def pred_p_xt_1_from_xt(self, xt, t, condition, mask=None):
+        pred = self.predict_start(xt, t, condition, mask=mask)
         return self.q_posterior(pred, xt, t)
-    
-    def sample_from_logits(self, probs):
         
-        # Debo acomodar las dimensiones para que multinomial funcione
+    def sample_from_probs(self, probs, mask=None):
         batch_size, num_classes, height, width = probs.shape
-        probs = probs.permute(0, 2, 3, 1)  # [B, H, W, C]
-        probs_flat = probs.reshape(-1, num_classes)
-        probs_flat = tr.clamp(probs_flat, min=0.0)
-        probs_flat = probs_flat + 1e-6
-        probs_flat = probs_flat / probs_flat.sum(dim=-1, keepdim=True)
-        
-        # Tomo una muestra de la distribución logits
-        sampled = tr.multinomial(probs_flat, num_samples=1).squeeze(-1)
-        # Debo volver a darle la forma original a sampled
-        sampled = sampled.reshape(batch_size, height, width)
-        return sampled    
+
+        probs = tr.clamp(probs.permute(0, 2, 3, 1), min=0.0)   # [B, H, W, C]
+        probs = probs / (probs.sum(dim=-1, keepdim=True) + 1e-8)
+
+        if mask is not None:
+            valid = mask.squeeze(1)   # [B, H, W]
+            sampled = tr.zeros((batch_size, height, width), device=probs.device, dtype=tr.long)
+            sampled[valid] = tr.multinomial(probs[valid], 1).squeeze(-1)
+            return sampled
+
+        sampled = tr.multinomial(
+            probs.reshape(-1, num_classes), 1
+        ).squeeze(-1)
+
+        return sampled.reshape(batch_size, height, width)
     
     def q_sample(self, x0_oh, t, gumbel=True, temperature=1.0):
         # x0_oh: [B, num_classes, H, W] (Debe ser One-Hot float)
@@ -185,32 +202,35 @@ class DiffusionModel(nn.Module):
             probs_perm = qxt_probs.permute(0, 2, 3, 1) # [B, H, W, C]
             sample_idx = tr.distributions.Categorical(probs_perm).sample()
             return sample_idx
-    
-    @tr.no_grad()
-    def p_sample(self, xt, t, condition):
-        # Obtenemos probabilidades de la posterior [B, 2, L, L]
-        posterior_probs = self.pred_p_xt_1_from_xt(xt, t, condition) 
-        # Muestreamos de la distribución predicha
-        out = self.sample_from_logits(posterior_probs)
-        return out
 
     @tr.no_grad()
-    def p_sample_loop(self, shape, condition):
-        """ Muestrea una imagen desde ruido puro """
+    def p_sample(self, xt, t, condition, mask=None):
+        # Get posterior probabilities [B, 2, L, L] considering the mask        
+        posterior_probs = self.pred_p_xt_1_from_xt(xt, t, condition, mask=mask)
+        # Sample from the predicted distribution considering the mask
+        out = self.sample_from_probs(posterior_probs, mask=mask)
+        return out
+
+
+    @tr.no_grad()
+    def p_sample_loop(self, shape, condition, mask=None):
+        """Sample an image from pure noise."""
         batch_size = shape[0]
         device = self.alphas.device
-        # Empezamos desde ruido puro (uniforme)
-        xt = tr.randint(0, self.num_classes, shape, device=device).long() 
-        
+        # strart from pure noise (uniform distribution)
+        xt = tr.randint(0, self.num_classes, shape, device=device).long()
+
         for t in reversed(range(0, self.time_steps)):
             t_batch = tr.full((batch_size,), t, device=device, dtype=tr.long)
-            xt = self.p_sample(xt, t_batch, condition)
+            xt = self.p_sample(xt, t_batch, condition, mask=mask)
         return xt
+
     
     @tr.no_grad()
-    def _sample(self, condition):
-        shape = (condition.shape[0], condition.shape[2], condition.shape[3]) # batch_size, height, width, dim=1 -> channel
-        samples = self.p_sample_loop(shape, condition)
+    def sample(self, condition, mask=None):
+        # batch_size, height, width, dim=1 -> channel
+        shape = (condition.shape[0], condition.shape[2], condition.shape[3])
+        samples = self.p_sample_loop(shape, condition, mask=mask)
         return samples
     
     def compute_vlb(self, x0_oh, xt, t, condition, mask=None):
@@ -222,7 +242,7 @@ class DiffusionModel(nn.Module):
             true_posterior = self.q_posterior(x0_oh, xt, t) 
             
             # 2. Posterior Predicha
-            pred_x0_probs = self.predict_start(xt, t, condition, return_logits=False)
+            pred_x0_probs = self.predict_start(xt, t, condition, mask=mask, return_logits=False)
             pred_posterior = self.q_posterior(pred_x0_probs, xt, t)
             
             # 3. KL Divergence 
@@ -233,17 +253,15 @@ class DiffusionModel(nn.Module):
             kl = true_posterior * (tr.log(true_posterior) - tr.log(pred_posterior))
             kl_pixelwise = tr.sum(kl, dim=1) # [B, L, L]
             
+            # Apply mask
             # --- APLICAR MÁSCARA ---
-            if mask is not None:
-                # Asegurar dimensiones: mask [B, 1, L, L] -> [B, L, L]
-                mask_s = mask.squeeze(1)
-                
-                # Anular la loss en el padding
-                kl_pixelwise = kl_pixelwise * mask_s
-                
-                # Promediar solo sobre píxeles válidos
-                # Suma total / Cantidad de píxeles válidos
-                return kl_pixelwise.sum() / (mask_s.sum() + 1e-8)
+            if mask is not None: 
+                # check mask shape: [B, 1, L, L] -> [B, L, L]
+                mask_s = mask.squeeze(1) 
+                # Evaluate the kl only on valid pixels
+                kl_valid = kl_pixelwise[mask_s]
+                # average only over valid pixels 
+                return kl_valid.mean()
                 
             return kl_pixelwise.mean()
     
@@ -259,14 +277,10 @@ class DiffusionModel(nn.Module):
         for t_step in range(self.time_steps):
             # Crear batch de tiempos constantes para este paso
             t = tr.full((batch_size,), t_step, device=device).long()
-            
-            # 1. Muestrear xt 
+            # 1. sample xt ~ q(xt|x0) with gumbel-softmax 
             xt = self.q_sample(x0_oh, t, gumbel=True, temperature=1.0)
-            
-            # 2. Calcular VLB para este paso t
-            # compute_vlb calcula la KL( Posterior Real || Posterior Predicha )
+            # calculate KL on step t ( Posterior GT || Posterior pred )
             loss_t = self.compute_vlb(x0_oh, xt, t, condition, mask=mask)
-            
             total_loss += loss_t 
                  
         return total_loss
