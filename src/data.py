@@ -197,17 +197,18 @@ def pad_batch(batch):
     raw_max_len = max(L)
     # Ceil max length to a multiple of 4 to keep downsampling valid.
     max_len = math.ceil(raw_max_len / 4) * 4 
-    embedding_pad = tr.full((len(batch), batch[0]["embedding"].shape[0], max_len), float('nan')) 
-    conditioning_pad = tr.full((len(batch), batch[0]["conditioning"].shape[0], max_len, max_len), float('nan'))# mask (B, 1, L, L)
+    embedding_pad = tr.zeros((len(batch), batch[0]["embedding"].shape[0], max_len)) 
+    conditioning_pad = tr.zeros((len(batch), batch[0]["conditioning"].shape[0], max_len, max_len))# mask (B, 1, L, L)
     mask_pad = tr.zeros((len(batch), 1, max_len, max_len), dtype=tr.bool)
 
     if batch[0]["contact"] is None:
         contact_pad = None
         contact_oh_pad = None
     else: 
-        # make nan padding
-        contact_pad = tr.full((len(batch), max_len, max_len), float('nan'))
-        contact_oh_pad = tr.full((len(batch), 2, max_len, max_len), float('nan'))
+        # make zero padding
+        contact_pad = tr.zeros((len(batch), max_len, max_len))
+        contact_oh_pad = tr.zeros((len(batch), 2, max_len, max_len))
+        contact_oh_pad[:,0, :,:] = 1.
 
     for k in range(len(batch)):
         embedding_pad[k, :, : L[k]] = batch[k]["embedding"]

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime
 import sys
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -23,24 +24,31 @@ from src.sweeps import (
 # ------------------------------------------------------------
 # setup (edit this block)
 # ------------------------------------------------------------
-EXPERIMENT_NAME = "ArchiveII_simfold_128_fold0"
+# EXPERIMENT_NAME = "ArchiveII_simfold_128_fold0"
+EXPERIMENT_NAME = "ArchiveII_simfold_128_test0"
+
 BASE_CONFIG_PATH = "configs/train/default.yaml"
 PARTITIONS = ["sim60", "sim70", "sim80", "sim90"] 
 TIMESTEPS = [5, 10, 15, 25, 50]
-
 EPOCHS = 15
+
+PRECISION="16-mixed"
+
+now = datetime.now()
+dt = now.strftime("%Y-%m-%d-%h") 
 FOLD = 0
 RESUME = False
 DRY_RUN = False
-RUN_NAME_TEMPLATE = "{partition}_t{timestep}"
+RUN_NAME_TEMPLATE = "{dt}_Fold{fold}"
 
 
 def build_run_config(base_config, experiment_name, partition, timestep, epochs, fold):
     config = clone_config(base_config)
+
+    now = datetime.now()
+    dt = now.strftime("%Y%m%d-%H%M") 
     run_name = RUN_NAME_TEMPLATE.format(
-        partition=partition,
-        timestep=timestep,
-        epochs=epochs,
+        dt=dt, 
         fold=fold,
     )
     config.experiment.name = run_name
@@ -51,6 +59,7 @@ def build_run_config(base_config, experiment_name, partition, timestep, epochs, 
     config.data.fold = fold
     config.model.timesteps = timestep
     config.training.max_epochs = epochs
+    config.training.precision = PRECISION
     config.logging.save_dir = f"logs/{experiment_name}/{partition}/t{timestep}"
     return config, run_name
 

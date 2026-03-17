@@ -22,7 +22,7 @@ training:
   num_workers: 2
   accelerator: "auto"
   devices: 1
-  precision: 32
+  precision: "32"
 
 logging:
   save_dir: "logs/RNADiffusion"

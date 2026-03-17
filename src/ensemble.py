@@ -88,9 +88,11 @@ def generate_raw_samples(model, loader, output_dir, num_samples, base_seed, chun
             continue
 
         conditioning = batch["conditioning"][pending_indices].to(device)
+        mask = batch["mask"][pending_indices].to(device)
         sampled = _sample_batch(
             model=model,
             conditioning=conditioning,
+            mask=mask,
             num_samples=num_samples,
             base_seed=base_seed,
             chunk_size=chunk_size,
