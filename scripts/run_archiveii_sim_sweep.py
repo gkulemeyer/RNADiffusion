@@ -25,19 +25,19 @@ from src.sweeps import (
 # setup (edit this block)
 # ------------------------------------------------------------
 # EXPERIMENT_NAME = "ArchiveII_simfold_128_fold0"
-EXPERIMENT_NAME = "ArchiveII_simfold_128_test0"
+EXPERIMENT_NAME = "ArchiveII_simfold_128"
 
 BASE_CONFIG_PATH = "configs/train/default.yaml"
 PARTITIONS = ["sim60", "sim70", "sim80", "sim90"] 
 TIMESTEPS = [5, 10, 15, 25, 50]
-EPOCHS = 15
+EPOCHS = 30
 
 PRECISION="16-mixed"
 
 now = datetime.now()
 dt = now.strftime("%Y-%m-%d-%h") 
 FOLD = 0
-RESUME = False
+RESUME = True
 DRY_RUN = False
 RUN_NAME_TEMPLATE = "{dt}_Fold{fold}"
 
