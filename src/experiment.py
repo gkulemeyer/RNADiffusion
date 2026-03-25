@@ -167,10 +167,12 @@ def build_experiment_dir(config):
 
 def prepare_run(config, experiment_dir=None):
     config = prepare_experiment_config(config)
+
     if experiment_dir is None:
         experiment_dir = build_experiment_dir(config)
     else:
         experiment_dir = Path(experiment_dir)
+        
     config = prepare_experiment_config(config, experiment_dir)
 
     experiment_dir.mkdir(parents=True, exist_ok=True)

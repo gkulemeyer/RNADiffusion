@@ -217,7 +217,7 @@ class DiffusionModel(nn.Module):
         """Sample an image from pure noise."""
         batch_size = shape[0]
         device = self.alphas.device
-        # strart from pure noise (uniform distribution)
+        # start from pure noise (uniform distribution)
         xt = tr.randint(0, self.num_classes, shape, device=device).long()
 
         for t in reversed(range(0, self.time_steps)):

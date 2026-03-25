@@ -60,6 +60,6 @@ class OneHotEmbedding:
     def outer_emb(self, emb):
         """Given a one-hot embedding CxL, return the outer product emb_i ⊗ emb_j as C**2xLxL"""
 
-        outer = emb[:, None, :, None] * emb[None, :, None, :]
-        pair = outer.flatten(end_dim=1)
+        outer = emb[:, None, :, None] * emb[None, :, None, :] # CxCxLxL
+        pair = outer.flatten(end_dim=1) # (C**2)xLxL
         return pair

@@ -35,12 +35,13 @@ def clone_config(config):
     return to_config_dict(from_config_dict(config))
 
 
-def latest_run_dir(config):
+def latest_run_dir(config, run_pattern=None):
     config_dict = from_config_dict(config)
     save_dir = Path(config_dict["logging"]["save_dir"])
     run_name = build_experiment_name(config_dict)
+    pattern = run_pattern or f"{run_name}*"
 
-    matches = list(save_dir.glob(f"{run_name}*"))
+    matches = [path for path in save_dir.glob(pattern) if path.is_dir()]
     if not matches:
         return None
     matches.sort(key=lambda path: path.stat().st_mtime, reverse=True)

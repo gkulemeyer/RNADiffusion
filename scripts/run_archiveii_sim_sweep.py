@@ -25,24 +25,24 @@ from src.sweeps import (
 # setup (edit this block)
 # ------------------------------------------------------------
 # EXPERIMENT_NAME = "ArchiveII_simfold_128_fold0"
-EXPERIMENT_NAME = "ArchiveII_simfold_128"
+EXPERIMENT_NAME = "ArchiveII_test3"
 
 BASE_CONFIG_PATH = "configs/train/default.yaml"
-PARTITIONS = ["sim60", "sim70", "sim80", "sim90"] 
-TIMESTEPS = [5, 10, 15, 25, 50]
-EPOCHS = 30
+# PARTITIONS = ["sim60", "sim70", "sim80", "sim90"]
+PARTITIONS = ["sim70"] 
+TIMESTEPS = [5]
+BASE_DIM = [64]
+EPOCHS = 2
 
 PRECISION="16-mixed"
 
-now = datetime.now()
-dt = now.strftime("%Y-%m-%d-%h") 
 FOLD = 0
 RESUME = True
 DRY_RUN = False
-RUN_NAME_TEMPLATE = "{dt}_Fold{fold}"
+RUN_NAME_TEMPLATE = "{dt}_model_{base_dim}_Fold{fold}"
 
 
-def build_run_config(base_config, experiment_name, partition, timestep, epochs, fold):
+def build_run_config(base_config, experiment_name, partition, timestep, epochs, fold, base_dim):
     config = clone_config(base_config)
 
     now = datetime.now()
@@ -50,6 +50,7 @@ def build_run_config(base_config, experiment_name, partition, timestep, epochs, 
     run_name = RUN_NAME_TEMPLATE.format(
         dt=dt, 
         fold=fold,
+        base_dim=base_dim
     )
     config.experiment.name = run_name
     config.experiment.note = f"{experiment_name} | {partition} fold={fold}, t={timestep}, e={epochs}"
@@ -58,10 +59,16 @@ def build_run_config(base_config, experiment_name, partition, timestep, epochs, 
     )
     config.data.fold = fold
     config.model.timesteps = timestep
+    config.model.base_dim = base_dim
     config.training.max_epochs = epochs
     config.training.precision = PRECISION
-    config.logging.save_dir = f"logs/{experiment_name}/{partition}/t{timestep}"
+    config.logging.save_dir = f"logs/{experiment_name}/{partition}/t{timestep}/m{base_dim}"
     return config, run_name
+
+
+def build_resume_pattern(fold):
+    # Match prior runs for the same fold regardless of timestamp or numeric suffix.
+    return f"*_Fold{fold}*"
 
 
 def main():
@@ -69,52 +76,58 @@ def main():
     base_config = to_config_dict(load_config(repo_root / BASE_CONFIG_PATH))
     jobs = [(partition, timestep) for partition in PARTITIONS for timestep in TIMESTEPS]
 
-    for index, (partition, timestep) in enumerate(jobs, start=1):
-        config, run_name = build_run_config(
-            base_config=base_config,
-            experiment_name=EXPERIMENT_NAME,
-            partition=partition,
-            timestep=timestep,
-            epochs=EPOCHS,
-            fold=FOLD,
-        )
-        print(f"\n[{index}/{len(jobs)}] {run_name}")
+    for i, (partition, timestep) in enumerate(jobs, start=1):
 
-        partition_path = repo_root / config.data.partition_path
-        if not partition_path.exists():
-            raise FileNotFoundError(f"Partition file not found: {partition_path}")
+        for base_dim in BASE_DIM:
+            config, run_name = build_run_config(
+                base_config=base_config,
+                experiment_name=EXPERIMENT_NAME,
+                partition=partition,
+                timestep=timestep,
+                epochs=EPOCHS,
+                fold=FOLD,
+                base_dim=base_dim
+            )
+            print(f"\n[{i}/{len(jobs)}] {run_name}")
 
-        plain_config = from_config_dict(config)
-        target_dir = Path(plain_config["logging"]["save_dir"]) / run_name
-        existing_run = latest_run_dir(config) if RESUME else None
-        resume_checkpoint = None
+            partition_path = repo_root / config.data.partition_path
+            if not partition_path.exists():
+                raise FileNotFoundError(f"Partition file not found: {partition_path}")
 
-        if RESUME and existing_run is not None:
-            finished_epochs = completed_epochs(existing_run)
-            completed_run = run_completed(existing_run)
-            if completed_run is not None and finished_epochs is not None and finished_epochs >= EPOCHS:
-                print(f"[SKIP] {completed_run} already reached {finished_epochs} epochs")
+            plain_config = from_config_dict(config)
+            target_dir = Path(plain_config["logging"]["save_dir"]) / run_name
+            existing_run = latest_run_dir(
+                config,
+                run_pattern=build_resume_pattern(config.data.fold),
+            ) if RESUME else None
+            resume_checkpoint = None
+
+            if RESUME and existing_run is not None:
+                finished_epochs = completed_epochs(existing_run)
+                completed_run = run_completed(existing_run)
+                if completed_run is not None and finished_epochs is not None and finished_epochs >= EPOCHS:
+                    print(f"[SKIP] {completed_run} already reached {finished_epochs} epochs")
+                    continue
+
+                resume_checkpoint = last_checkpoint_path(existing_run)
+                if resume_checkpoint is not None:
+                    target_dir = existing_run
+
+            if DRY_RUN:
+                if resume_checkpoint is not None:
+                    print(f"[DRY-RUN] would resume {run_name} -> {target_dir} from {resume_checkpoint}")
+                else:
+                    print(f"[DRY-RUN] would run {run_name} -> {target_dir}")
                 continue
 
-            resume_checkpoint = last_checkpoint_path(existing_run)
             if resume_checkpoint is not None:
-                target_dir = existing_run
-
-        if DRY_RUN:
+                print(f"[RESUME] {run_name} -> {target_dir} from {resume_checkpoint}")
+            run_kwargs = {"resume_from_checkpoint": resume_checkpoint}
             if resume_checkpoint is not None:
-                print(f"[DRY-RUN] would resume {run_name} -> {target_dir} from {resume_checkpoint}")
-            else:
-                print(f"[DRY-RUN] would run {run_name} -> {target_dir}")
-            continue
+                run_kwargs["experiment_dir"] = target_dir
 
-        if resume_checkpoint is not None:
-            print(f"[RESUME] {run_name} -> {target_dir} from {resume_checkpoint}")
-        run_kwargs = {"resume_from_checkpoint": resume_checkpoint}
-        if resume_checkpoint is not None:
-            run_kwargs["experiment_dir"] = target_dir
-
-        result = run_experiment(plain_config, **run_kwargs)
-        print(f"[DONE] {result['experiment_dir']}")
+            result = run_experiment(plain_config, **run_kwargs)
+            print(f"[DONE] {result['experiment_dir']}")
 
 
 if __name__ == "__main__":
