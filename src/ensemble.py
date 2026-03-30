@@ -44,20 +44,25 @@ class SequenceEnsemble:
 
         targets = self.target.unsqueeze(0).expand(preds.shape[0], -1, -1)
         return contact_f1_gpu(preds, targets, lengths=[self.length] * len(preds), reduce=False).tolist()
+    
+def _get_mask2d_from_length(length, max_length): 
+    mask = tr.zeros((max_length, max_length), dtype=tr.bool)
+    mask[length:, :] = True
+    mask[:, length:] = True
+    return mask
 
-def _sample_batch(model, conditioning, mask, num_samples, base_seed, chunk_size):
-    batch_size = conditioning.shape[0]
+def _sample_batch(model, conditioning, lengths, num_samples, base_seed, chunk_size):
+    batch_size = conditioning.shape[0] 
     chunks = []
     generated = 0
 
     while generated < num_samples:
         current_chunk = min(chunk_size, num_samples - generated)
         tr.manual_seed(base_seed + generated)
-        expanded_conditioning = conditioning.repeat_interleave(current_chunk, dim=0)
-        expanded_mask = mask.repeat_interleave(current_chunk, dim=0)
-
+        expanded_conditioning = conditioning.repeat_interleave(current_chunk, dim=0) 
+        expanded_lengths = lengths.repeat_interleave(current_chunk)
         with tr.no_grad():
-            sampled = model.sample(expanded_conditioning, mask=expanded_mask)
+            sampled = model.sample(expanded_conditioning, lengths=expanded_lengths)
 
         if sampled.ndim == 4:
             sampled = sampled.argmax(dim=1)
@@ -87,12 +92,13 @@ def generate_raw_samples(model, loader, output_dir, num_samples, base_seed, chun
         if not pending_indices:
             continue
 
-        conditioning = batch["conditioning"][pending_indices].to(device)
-        mask = batch["mask"][pending_indices].to(device)
+        conditioning = batch["conditioning"][pending_indices].to(device) 
+        lengths = tr.tensor(batch["length"], dtype=tr.long).to(device)
+        lengths = lengths[pending_indices].to(device)
         sampled = _sample_batch(
             model=model,
             conditioning=conditioning,
-            mask=mask,
+            lengths=lengths,
             num_samples=num_samples,
             base_seed=base_seed,
             chunk_size=chunk_size,

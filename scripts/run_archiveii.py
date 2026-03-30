@@ -24,13 +24,13 @@ from src.sweeps import (
 # ------------------------------------------------------------
 # setup
 # ------------------------------------------------------------
-EXPERIMENT_NAME = "ArchiveII_test_newexp"
+EXPERIMENT_NAME = "ArchiveII_test_max_ts"
 
 BASE_CONFIG_PATH = "configs/train/default.yaml"
 PARTITIONS = ["sim70"]
-TIMESTEPS = [25]
+TIMESTEPS = [50, 75, 100]
 BASE_DIM = [64]
-EPOCHS = 1
+EPOCHS = 2
 
 PRECISION = "16-mixed"
 

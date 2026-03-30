@@ -17,12 +17,12 @@ class RNADiffusionModule(L.LightningModule):
         return self.model.forward_all_timesteps(
             batch["contact_oh"],
             batch["conditioning"],
-            mask=batch["mask"],
+            lengths=batch["length"],
         )
 
     def _evaluate_batch(self, batch):
         loss = self._compute_loss(batch)
-        predictions = self.model.sample(batch["conditioning"], batch["mask"])
+        predictions = self.model.sample(batch["conditioning"], lengths=batch["length"])
         f1_score = contact_f1(
             predictions,
             batch["contact_oh"],

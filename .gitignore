@@ -1,3 +1,9 @@
 *.pt
 __pycache__/
 *.pyc
+**.ckpt
+**.log
+**.csv
+**.json 
+**.yml
+events.out**
