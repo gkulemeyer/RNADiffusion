@@ -44,13 +44,7 @@ class SequenceEnsemble:
 
         targets = self.target.unsqueeze(0).expand(preds.shape[0], -1, -1)
         return contact_f1_gpu(preds, targets, lengths=[self.length] * len(preds), reduce=False).tolist()
-    
-def _get_mask2d_from_length(length, max_length): 
-    mask = tr.zeros((max_length, max_length), dtype=tr.bool)
-    mask[length:, :] = True
-    mask[:, length:] = True
-    return mask
-
+     
 def _sample_batch(model, conditioning, lengths, num_samples, base_seed, chunk_size):
     batch_size = conditioning.shape[0] 
     chunks = []
@@ -93,14 +87,13 @@ def generate_raw_samples(model, loader, output_dir, num_samples, base_seed, chun
             continue
 
         conditioning = batch["conditioning"][pending_indices].to(device) 
-        lengths = tr.tensor(batch["length"], dtype=tr.long).to(device)
-        lengths = lengths[pending_indices].to(device)
+        lengths = tr.tensor(batch["length"], dtype=tr.long).to(device) 
         sampled = _sample_batch(
             model=model,
             conditioning=conditioning,
             lengths=lengths,
             num_samples=num_samples,
-            base_seed=base_seed,
+            lengths = lengths[pending_indices],
             chunk_size=chunk_size,
         )
 

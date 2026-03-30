@@ -204,8 +204,7 @@ def pad_batch(batch):
     if batch[0]["contact"] is None:
         contact_pad = None
         contact_oh_pad = None
-    else: 
-        # make 
+    else:  
         contact_pad = tr.zeros((len(batch), max_len, max_len))
         contact_oh_pad = tr.zeros((len(batch), 2, max_len, max_len))
         contact_oh_pad[:, 0, :, :] = 1  # default to no contact
