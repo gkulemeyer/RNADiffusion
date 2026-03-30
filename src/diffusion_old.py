@@ -59,17 +59,8 @@ class DiffusionModel(nn.Module):
         self.register_buffer("one_minus_alphas_bar", one_minus_alphas_bar)
         
         # buffer de Lt para nll estocastico VER
-        
-    def x_to_one_hot(self, x):
-        if x.dim() == 4:
-            return x.float()
-        else:
-            # x is [B, H, W], convert to one-hot [B, C, H, W]
-            # [B, L, L, 2] -> [B, 2, L, L]
-            return F.one_hot(x, num_classes=self.num_classes).permute(0, 3, 1, 2).float()
 
     def _prepare_backbone_inputs(self, xt_input, condition, mask=None):
-        xt_input = self.x_to_one_hot(xt_input)
         if mask is None:
             return xt_input, condition
 
@@ -82,25 +73,6 @@ class DiffusionModel(nn.Module):
         cond_backbone = tr.where(valid_cond, condition, tr.zeros_like(condition))
         return xt_backbone, cond_backbone
     
-    def sample_categorical(self, logits, mask=None):
-            uniform = tr.rand_like(logits)
-            gumbel_noise = -tr.log(-tr.log(uniform + 1e-30) + 1e-30)
-            sampled = (gumbel_noise + logits).argmax(dim=1) # [B, L, L]
-            if mask is None:
-                return sampled
-            if mask.ndim == 4:
-                mask = mask.squeeze(1) # [B, L, L]
-
-            out = tr.zeros_like((sampled)) 
-            out[mask] = sampled[mask]
-            return out
-
-    def sample_from_probs(self, probs, mask=None):
-        # probs: [B, C, H, W]
-        probs = tr.clamp(probs, min=1e-30)
-        probs = probs / (probs.nansum(dim=1, keepdim=True) + 1e-8)
-        logits = tr.log(probs) 
-        return self.sample_categorical(logits, mask=mask)  #  [B,H,W]
     
     def q_pred(self, x0, t):
         """ Dada una imagen x0 y un tiempo t, obtiene q(xt|x0)
@@ -116,7 +88,7 @@ class DiffusionModel(nn.Module):
         # La distribución qt es una mezcla entre la distribución one-hot y la distribución uniforme
         # q(xt|x0) 
         probs = alphas_bar * x0 + one_minus_alphas_bar / self.num_classes
-        return probs # [B, C, H, W]
+        return probs
     
     def q_step(self, xt_1, t):
         """ Dada una imagen xt_1 y un tiempo t, obtiene q(xt|xt_1)
@@ -126,14 +98,19 @@ class DiffusionModel(nn.Module):
         """
     
         # le agrego al mapa de contactos la clase 0/1
-        xt_1_one_hot = self.x_to_one_hot(xt_1)
- 
+       # Convertir indices a One-Hot y mover canales al lugar 1: [B, L, L, 2] -> [B, 2, L, L]
+       
+        if xt_1.dim() == 4:
+            xt_1_one_hot = xt_1 # Ya es vector [B, C, H, W]
+        else:
+            xt_1_one_hot = F.one_hot(xt_1, num_classes=self.num_classes).permute(0, 3, 1, 2).float() 
+        
         # el vector alphas_t tiene que tener shape (batch_size, 1, 1, 1) para que la multiplicacion de matrices funcione
         alphas_t = extract(self.alphas, t, xt_1_one_hot.shape)
         one_minus_alpha_t = extract(self.one_minus_alphas, t, xt_1_one_hot.shape)
         # La distribución qt es una mezcla entre la distribución one-hot y la distribución uniforme
         qxt = alphas_t * xt_1_one_hot + one_minus_alpha_t / self.num_classes
-        return qxt  # [B, C, H, W]
+        return qxt 
 
     def q_posterior(self, x0, xt, t):
         """ Dada una imagen xt, una x0 y un tiempo t, calcula la distribución q(xt-1|xt,x0)
@@ -143,16 +120,22 @@ class DiffusionModel(nn.Module):
         return: tensor de shape (batch_size, height, width, num_classes) con las probabilidades de cada clase en cada pixel           
         """
         
-        x0_one_hot = self.x_to_one_hot(x0)
+         # Caso 1: Son índices [B, L, L] -> Necesita One-Hot
+        if x0.dim() == 3:
+             x0_vec = F.one_hot(x0.long(), num_classes=self.num_classes).permute(0, 3, 1, 2).float()
+        
+        # Caso 2: Ya es One-Hot o Probabilidades [B, 2, L, L] -> Solo aseguramos float
+        elif x0.dim() == 4:
+             x0_vec = x0.float()
         
         # q(xt-1 | xt, x0) = q(xt | xt-1, x0) * q(xt-1 | x0) / q(xt | x0)
         # where q(xt | xt-1, x0) = q(xt | xt-1).
                 
         t_1 = tr.clamp(t-1, min=0) # t-1, pero no menor a 0
-        qxt_1_given_x0 = self.q_pred(x0_one_hot, t_1)  # q(xt-1|x0)
+        qxt_1_given_x0 = self.q_pred(x0_vec, t_1)  # q(xt-1|x0)
         
         qxt_1_given_x0 = tr.where(t.view(-1, 1, 1, 1) == 0,
-                                  x0_one_hot,
+                                  x0_vec,
                                   qxt_1_given_x0
                                   )  # Si t=0, entonces xt-1 = x0
         # q(xt|xt-1)
@@ -162,13 +145,16 @@ class DiffusionModel(nn.Module):
         posterior = qxt_1_given_x0 * qxt_given_xt_1  # p(xt-1|xt,x0)        
         # Normalizo para que sea una distribución de probabilidad
         # sobre la dimensión de canales (dim 1)
-        posterior = posterior / (posterior.nansum(dim=1, keepdim=True) + 1e-8)
+        posterior = posterior / (posterior.sum(dim=1, keepdim=True) + 1e-8)
         return posterior 
         
     def predict_start(self, xt, t, condition, mask=None, return_logits=False):
-            # takes xt [B,H,W] and condition [B,C,H,W]
-            xt_input, condition = self._prepare_backbone_inputs(xt, condition, mask=mask)
-             # now xt_input is [B,C,H,W] one-hot, with padding handled, and condition is also padded
+            if xt.dim() == 4:
+                xt_input = xt
+            else:
+                xt_input = F.one_hot(xt, num_classes=self.num_classes).permute(0, 3, 1, 2).float()
+
+            xt_input, condition = self._prepare_backbone_inputs(xt_input, condition, mask=mask)
             unet_input = tr.cat([xt_input, condition], dim=1)
             out = self.diffuser(unet_input, t)
 
@@ -179,19 +165,66 @@ class DiffusionModel(nn.Module):
     def pred_p_xt_1_from_xt(self, xt, t, condition, mask=None):
         pred = self.predict_start(xt, t, condition, mask=mask)
         return self.q_posterior(pred, xt, t)
+        
+    # def sample_from_probs(self, probs, mask=None):
+    #     batch_size, num_classes, height, width = probs.shape
+
+    #     probs = tr.clamp(probs.permute(0, 2, 3, 1), min=0.0)   # [B, H, W, C]
+    #     probs = probs / (probs.sum(dim=-1, keepdim=True) + 1e-8)
+
+    #     if mask is not None:
+    #         valid = mask.squeeze(1)   # [B, H, W]
+    #         sampled = tr.zeros((batch_size, height, width), device=probs.device, dtype=tr.long)
+    #         sampled[valid] = tr.multinomial(probs[valid], 1).squeeze(-1)
+    #         return sampled
+
+    #     sampled = tr.multinomial(
+    #         probs.reshape(-1, num_classes), 1
+    #     ).squeeze(-1)
+
+    #     return sampled.reshape(batch_size, height, width)
+    def sample_from_probs(self, probs):
+        
+        # Debo acomodar las dimensiones para que multinomial funcione
+        batch_size, num_classes, height, width = probs.shape
+        probs = probs.permute(0, 2, 3, 1)  # [B, H, W, C]
+        probs_flat = probs.reshape(-1, num_classes)
+        probs_flat = tr.clamp(probs_flat, min=0.0)
+        probs_flat = probs_flat + 1e-6
+        probs_flat = probs_flat / probs_flat.sum(dim=-1, keepdim=True)
+        
+        # Tomo una muestra de la distribución logits
+        sampled = tr.multinomial(probs_flat, num_samples=1).squeeze(-1)
+        # Debo volver a darle la forma original a sampled
+        sampled = sampled.reshape(batch_size, height, width)
+        return sampled 
     
-    
-    def q_sample(self, x0_oh, t, mask=None):
+    def q_sample(self, x0_oh, t, gumbel=True, temperature=1.0):
+        # x0_oh: [B, num_classes, H, W] (Debe ser One-Hot float)
+        
+        # 1. Obtener probabilidades q(xt|x0)
         qxt_probs = self.q_pred(x0_oh, t)
-        qxt_probs = tr.clamp(qxt_probs, min=1e-20, max=1.0) 
-        return self.sample_from_probs(qxt_probs, mask=mask)
+        qxt_probs = tr.clamp(qxt_probs, min=1e-20, max=1.0)
+        if gumbel:
+            # Gumbel-Softmax: Retorna Tensor Soft [B, C, H, W] diferenciable
+            # epsilon para evitar log(0)
+            eps = 1e-30
+            logits = tr.log(qxt_probs + eps)
+            # hard=False para que sea diferenciable
+            return F.gumbel_softmax(logits, tau=temperature, hard=False, dim=1)
+        else:
+            # Muestreo normal (Indices) - No diferenciable
+            probs_perm = qxt_probs.permute(0, 2, 3, 1) # [B, H, W, C]
+            sample_idx = tr.distributions.Categorical(probs_perm).sample()
+            return sample_idx
 
     @tr.no_grad()
     def p_sample(self, xt, t, condition, mask=None):
         # Get posterior probabilities [B, 2, L, L] considering the mask        
         posterior_probs = self.pred_p_xt_1_from_xt(xt, t, condition, mask=mask)
         # Sample from the predicted distribution considering the mask
-        out = self.sample_from_probs(posterior_probs, mask=mask)
+        out = self.sample_from_probs(posterior_probs)
+        # out = self.sample_from_probs(posterior_probs, mask=mask)
         return out
 
 
@@ -234,7 +267,7 @@ class DiffusionModel(nn.Module):
             pred_posterior = tr.clamp(pred_posterior, min=eps, max=1.0)
             
             kl = true_posterior * (tr.log(true_posterior) - tr.log(pred_posterior))
-            kl_pixelwise = tr.nansum(kl, dim=1) # [B, L, L]
+            kl_pixelwise = tr.sum(kl, dim=1) # [B, L, L]
             
             # Apply mask
             # --- APLICAR MÁSCARA ---
@@ -261,7 +294,7 @@ class DiffusionModel(nn.Module):
             # Crear batch de tiempos constantes para este paso
             t = tr.full((batch_size,), t_step, device=device).long()
             # 1. sample xt ~ q(xt|x0) with gumbel-softmax 
-            xt = self.q_sample(x0_oh, t, mask=mask) # [B,H,W] 
+            xt = self.q_sample(x0_oh, t, gumbel=True, temperature=1.0)
             # calculate KL on step t ( Posterior GT || Posterior pred )
             loss_t = self.compute_vlb(x0_oh, xt, t, condition, mask=mask)
             total_loss += loss_t 

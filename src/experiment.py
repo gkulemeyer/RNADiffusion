@@ -10,7 +10,7 @@ from lightning.pytorch import Trainer
 from lightning.pytorch import seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint
 
-from src.config import build_experiment_name, prepare_experiment_config, save_config
+from src.config import build_experiment_dir, prepare_experiment_config, save_config
 from src.data import RNADataModule, build_dataloader
 from src.ensemble import (
     generate_raw_samples,
@@ -25,145 +25,6 @@ from src.io import (
     write_samples_metadata,
 )
 from src.train_module import RNADiffusionModule
-
-
-def write_metrics_csv(raw_metrics_path, output_path):
-    raw_metrics_path = Path(raw_metrics_path)
-    output_path = Path(output_path)
-
-    with raw_metrics_path.open("r", encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle)
-        rows = list(reader)
-
-    grouped = {}
-    metric_names = []
-    for row in rows:
-        key = (row.get("epoch", ""), row.get("step", ""))
-        if key not in grouped:
-            grouped[key] = {"epoch": key[0], "step": key[1]}
-
-        for metric_name, metric_value in row.items():
-            if metric_name in ("epoch", "step"):
-                continue
-            if metric_name not in metric_names:
-                metric_names.append(metric_name)
-            if metric_value not in ("", None):
-                grouped[key][metric_name] = metric_value
-
-    fieldnames = ["epoch", "step"] + metric_names
-    with output_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(grouped.values())
-
-
-def merge_csv_files(source_paths, output_path):
-    rows = []
-    fieldnames = []
-
-    for source_path in source_paths:
-        source_path = Path(source_path)
-        if not source_path.exists():
-            continue
-
-        with source_path.open("r", encoding="utf-8", newline="") as handle:
-            reader = csv.DictReader(handle)
-            for row in reader:
-                for fieldname in row.keys():
-                    if fieldname not in fieldnames:
-                        fieldnames.append(fieldname)
-                rows.append(row)
-
-    if not rows:
-        return
-
-    with Path(output_path).open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def _export_lightning_metrics(loggers, config):
-    csv_logger = next((logger for logger in loggers if logger.__class__.__name__ == "CSVLogger"), None)
-    if csv_logger is None:
-        raise FileNotFoundError("CSVLogger not found in configured loggers")
-
-    source_metrics_path = Path(csv_logger.log_dir) / "metrics.csv"
-    if not source_metrics_path.exists():
-        raise FileNotFoundError(f"CSVLogger did not produce metrics.csv at {source_metrics_path}")
-
-    lightning_dir = Path(config["logging"]["lightning_dir"])
-    lightning_dir.mkdir(parents=True, exist_ok=True)
-
-    raw_metrics_path = lightning_dir / "metrics_raw.csv"
-    if raw_metrics_path.exists():
-        raw_metrics_path.unlink()
-    shutil.move(str(source_metrics_path), raw_metrics_path)
-
-    metrics_path = Path(config["logging"]["metrics_path"])
-    write_metrics_csv(raw_metrics_path, metrics_path)
-    return metrics_path, raw_metrics_path
-
-
-def _resolve_checkpoint_path(checkpoint_callback):
-    checkpoint_path = checkpoint_callback.best_model_path or checkpoint_callback.last_model_path
-    if not checkpoint_path:
-        raise FileNotFoundError("Lightning did not produce a best or last checkpoint")
-    return checkpoint_path
-
-
-def completed_epochs_from_checkpoint(checkpoint_path):
-
-    checkpoint = tr.load(checkpoint_path, map_location="cpu")
-    epoch = checkpoint.get("epoch")
-    if epoch is None:
-        return None
-    return int(epoch) + 1
-
-
-def archive_epoch_artifacts(experiment_dir, epoch_count, checkpoint_path, run_logger):
-    if epoch_count is None:
-        return checkpoint_path
-
-    experiment_dir = Path(experiment_dir)
-    archive_dir = experiment_dir / f"epoch_{epoch_count}"
-    archive_dir.mkdir(parents=True, exist_ok=True)
-
-    stats_path = experiment_dir / "ensemble_stats.csv"
-    if stats_path.exists():
-        archived_stats_path = archive_dir / "ensemble_stats.csv"
-        if archived_stats_path.exists():
-            archived_stats_path.unlink()
-        shutil.move(str(stats_path), archived_stats_path)
-        run_logger.info("Archived previous ensemble summary stats to %s", archived_stats_path)
-
-    checkpoint_path = Path(checkpoint_path)
-    if checkpoint_path.exists():
-        archived_checkpoint_path = archive_dir / checkpoint_path.name
-        if archived_checkpoint_path.exists():
-            archived_checkpoint_path.unlink()
-        shutil.move(str(checkpoint_path), archived_checkpoint_path)
-        run_logger.info("Archived previous last checkpoint to %s", archived_checkpoint_path)
-        return archived_checkpoint_path
-
-    return checkpoint_path
-
-
-def build_experiment_dir(config):
-    base_dir = Path(config["logging"]["save_dir"])
-    experiment_name = build_experiment_name(config)
-    experiment_dir = base_dir / experiment_name
-
-    if not experiment_dir.exists():
-        return experiment_dir
-
-    suffix = 1
-    while True:
-        candidate = Path(f"{experiment_dir}_{suffix}")
-        if not candidate.exists():
-            return candidate
-        suffix += 1
-
 
 def prepare_run(config, experiment_dir=None):
     config = prepare_experiment_config(config)
@@ -184,18 +45,62 @@ def prepare_run(config, experiment_dir=None):
     run_logger.info("Resolved config: %s", json.dumps(config, indent=2))
     return config, experiment_dir, run_logger
 
+def handle_metrics(loggers, config, resume=False):
+    csv_logger = next(
+        (l for l in loggers if l.__class__.__name__ == "CSVLogger"), None
+    )
+    if csv_logger is None:
+        raise RuntimeError("CSVLogger not found")
 
-def train_run(config, experiment_dir, run_logger, resume_from_checkpoint=None):
-    data_module = RNADataModule(config)
+    log_cfg = config["logging"]
+
+    src = Path(csv_logger.log_dir) / "metrics.csv"
+    dst_raw = Path(log_cfg["lightning_dir"]) / "metrics_raw.csv"
+    dst = Path(log_cfg["metrics_path"])
+
+    dst_raw.parent.mkdir(parents=True, exist_ok=True)
+
+    if dst_raw.exists() and resume:
+        prev = dst_raw.read_text()
+        new = src.read_text()
+        dst_raw.write_text(prev + new)
+        src.unlink()
+    else:
+        shutil.move(src, dst_raw)
+
+    # compact CSV 
+    with dst_raw.open() as f:
+        rows = list(csv.DictReader(f))
+
+    grouped = {}
+    keys = []
+    for r in rows:
+        k = (r.get("epoch"), r.get("step"))
+        grouped.setdefault(k, {"epoch": k[0], "step": k[1]})
+        for m, v in r.items():
+            if m in ("epoch", "step") or v in ("", None):
+                continue
+            grouped[k][m] = v
+            if m not in keys:
+                keys.append(m)
+
+    with dst.open("w") as f:
+        writer = csv.DictWriter(f, fieldnames=["epoch", "step"] + keys)
+        writer.writeheader()
+        writer.writerows(grouped.values())
+
+    return dst, dst_raw
+
+
+def train(config, experiment_dir, logger, resume=None):
+    log_cfg = config["logging"]
+    train_cfg = config["training"]
+
+    data = RNADataModule(config)
     model = RNADiffusionModule(config)
     loggers = build_loggers(config, experiment_dir)
-    previous_raw_metrics_backup = None
-    if resume_from_checkpoint is not None:
-        previous_raw_metrics = Path(config["logging"]["lightning_dir"]) / "metrics_raw.csv"
-        if previous_raw_metrics.exists():
-            previous_raw_metrics_backup = experiment_dir / "lightning" / "metrics_raw_previous.csv"
-            shutil.copy2(previous_raw_metrics, previous_raw_metrics_backup)
-    checkpoint_callback = ModelCheckpoint(
+
+    ckpt_cb = ModelCheckpoint(
         dirpath=experiment_dir / "checkpoints",
         filename="best",
         monitor="val_f1",
@@ -204,113 +109,95 @@ def train_run(config, experiment_dir, run_logger, resume_from_checkpoint=None):
         save_last=True,
         auto_insert_metric_name=False,
     )
+
     trainer = Trainer(
-        max_epochs=config["training"]["max_epochs"],
-        accelerator=config["training"]["accelerator"],
-        devices=config["training"]["devices"],
-        precision=config["training"]["precision"],
+        max_epochs=train_cfg["max_epochs"],
+        accelerator=train_cfg["accelerator"],
+        devices=train_cfg["devices"],
+        precision=train_cfg["precision"],
         logger=loggers,
-        callbacks=[checkpoint_callback],
-        log_every_n_steps=config["logging"]["log_every_n_steps"],
+        callbacks=[ckpt_cb],
+        log_every_n_steps=log_cfg["log_every_n_steps"],
     )
-    trainer.fit(model=model, datamodule=data_module, ckpt_path=resume_from_checkpoint)
 
-    metrics_path, raw_metrics_path = _export_lightning_metrics(loggers, config)
-    if previous_raw_metrics_backup is not None and previous_raw_metrics_backup.exists():
-        merge_csv_files([previous_raw_metrics_backup, raw_metrics_path], raw_metrics_path)
-        write_metrics_csv(raw_metrics_path, metrics_path)
-        previous_raw_metrics_backup.unlink()
-    run_logger.info("Training metrics saved to %s", metrics_path)
-    run_logger.info("Raw Lightning metrics saved to %s", raw_metrics_path)
+    trainer.fit(model, datamodule=data, ckpt_path=resume)
 
-    checkpoint_path = _resolve_checkpoint_path(checkpoint_callback)
-    return checkpoint_path
+    handle_metrics(loggers, config, resume=resume is not None)
 
+    ckpt = ckpt_cb.best_model_path or ckpt_cb.last_model_path
+    if not ckpt:
+        raise RuntimeError("No checkpoint produced")
 
-def finalize_run(config, experiment_dir, checkpoint_path, run_logger):
-    ensemble_config = config["ensemble"]
-    run_logger.info("Generating ensemble samples from %s", checkpoint_path)
+    logger.info("Training done. Checkpoint: %s", ckpt)
+    return ckpt
 
-    raw_samples_dir = Path(config["logging"]["raw_samples_dir"])
-    raw_samples_dir.mkdir(parents=True, exist_ok=True)
-    for sample_path in raw_samples_dir.glob("*.pt"):
-        sample_path.unlink()
-    samples_metadata_path = raw_samples_dir / "samples_metadata.yaml"
-    if samples_metadata_path.exists():
-        samples_metadata_path.unlink()
+def evaluate(config, experiment_dir, checkpoint, logger):
+    log_cfg = config["logging"]
+    ens_cfg = config["ensemble"]
 
+    samples_dir = Path(log_cfg["raw_samples_dir"])
+    samples_dir.mkdir(parents=True, exist_ok=True)
+
+    # eliminar esto en el futuro
+    for f in samples_dir.glob("*.pt"):
+        f.unlink()
+
+    model = load_model_checkpoint(config, checkpoint, eval_mode=True)
     loader = build_dataloader(config, partition="test", shuffle=False)
-    best_model = load_model_checkpoint(config, checkpoint_path, eval_mode=True)
+
     generate_raw_samples(
-        model=best_model,
+        model=model,
         loader=loader,
-        output_dir=config["logging"]["raw_samples_dir"],
-        num_samples=ensemble_config["num_samples"],
-        base_seed=ensemble_config["base_seed"],
-        chunk_size=ensemble_config["chunk_size"],
+        output_dir=samples_dir,
+        num_samples=ens_cfg["num_samples"],
+        base_seed=ens_cfg["base_seed"],
+        chunk_size=ens_cfg["chunk_size"],
     )
+
     write_samples_metadata(
-        samples_dir=config["logging"]["raw_samples_dir"],
-        checkpoint_path=checkpoint_path,
-        num_samples=ensemble_config["num_samples"],
-        base_seed=ensemble_config["base_seed"],
-        chunk_size=ensemble_config["chunk_size"],
+        samples_dir=samples_dir,
+        checkpoint_path=checkpoint,
+        num_samples=ens_cfg["num_samples"],
+        base_seed=ens_cfg["base_seed"],
+        chunk_size=ens_cfg["chunk_size"],
     )
 
-    run_logger.info("Evaluating ensemble statistics")
-    ensemble_df = evaluate_samples_dir(
-        samples_dir=config["logging"]["raw_samples_dir"],
-        consensus_sizes=ensemble_config["consensus_sizes"],
-        trials=ensemble_config["trials"],
-        seed=ensemble_config["base_seed"],
+    df = evaluate_samples_dir(
+        samples_dir=samples_dir,
+        consensus_sizes=ens_cfg["consensus_sizes"],
+        trials=ens_cfg["trials"],
+        seed=ens_cfg["base_seed"],
     )
-    ensemble_df.to_csv(config["logging"]["ensemble_path"], index=False)
+    df.to_csv(log_cfg["ensemble_path"], index=False)
 
-    ensemble_stats_path = experiment_dir / "ensemble_stats.csv"
-    ensemble_stats_df = evaluate_samples_stats(
-        samples_csv=config["logging"]["ensemble_path"],
-        consensus_sizes=ensemble_config["consensus_sizes"],
+    stats_path = experiment_dir / "ensemble_stats.csv"
+    stats = evaluate_samples_stats(
+        samples_csv=log_cfg["ensemble_path"],
+        consensus_sizes=ens_cfg["consensus_sizes"],
     )
-    ensemble_stats_df.to_csv(ensemble_stats_path, index=False)
+    stats.to_csv(stats_path, index=False)
 
     write_ensemble_metadata(
-        output_path=config["logging"]["ensemble_path"],
-        samples_dir=config["logging"]["raw_samples_dir"],
-        trials=ensemble_config["trials"],
-        consensus_sizes=ensemble_config["consensus_sizes"],
-        seed=ensemble_config["base_seed"],
-        metadata_path=config["logging"]["ensemble_metadata_path"],
+        output_path=log_cfg["ensemble_path"],
+        samples_dir=samples_dir,
+        trials=ens_cfg["trials"],
+        consensus_sizes=ens_cfg["consensus_sizes"],
+        seed=ens_cfg["base_seed"],
+        metadata_path=log_cfg["ensemble_metadata_path"],
     )
-    run_logger.info("Ensemble analysis saved to %s", config["logging"]["ensemble_path"])
-    run_logger.info("Ensemble summary stats saved to %s", ensemble_stats_path)
-    run_logger.info("Ensemble metadata saved to %s", config["logging"]["ensemble_metadata_path"])
-    run_logger.info("Experiment finished. Logs saved to %s", experiment_dir)
 
+    logger.info("Evaluation done")
+    
+def run_experiment(config, experiment_dir=None, resume=None):
+    config, exp_dir, logger = prepare_run(config, experiment_dir)
 
-def run_experiment(config, experiment_dir=None, resume_from_checkpoint=None):
-    config, experiment_dir, run_logger = prepare_run(config, experiment_dir=experiment_dir)
-    if resume_from_checkpoint is not None:
-        completed_epochs = completed_epochs_from_checkpoint(resume_from_checkpoint)
-        resume_from_checkpoint = archive_epoch_artifacts(
-            experiment_dir,
-            completed_epochs,
-            resume_from_checkpoint,
-            run_logger,
-        )
-    checkpoint_path = train_run(
-        config,
-        experiment_dir,
-        run_logger,
-        resume_from_checkpoint=resume_from_checkpoint,
-    )
-    finalize_run(config, experiment_dir, checkpoint_path, run_logger)
+    ckpt = train(config, exp_dir, logger, resume)
+
+    evaluate(config, exp_dir, ckpt, logger)
+
     return {
-        "config": config,
-        "experiment_dir": str(experiment_dir),
-        "metrics_path": config["logging"]["metrics_path"],
-        "checkpoint_path": str(checkpoint_path),
-        "ensemble_path": config["logging"]["ensemble_path"],
-        "ensemble_stats_path": str(experiment_dir / "ensemble_stats.csv"),
-        "ensemble_metadata_path": config["logging"]["ensemble_metadata_path"],
-        "raw_samples_dir": config["logging"]["raw_samples_dir"],
+        "experiment_dir": str(exp_dir),
+        "checkpoint": str(ckpt),
+        "metrics": config["logging"]["metrics_path"],
+        "ensemble": config["logging"]["ensemble_path"],
     }

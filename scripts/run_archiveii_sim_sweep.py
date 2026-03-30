@@ -25,14 +25,14 @@ from src.sweeps import (
 # setup (edit this block)
 # ------------------------------------------------------------
 # EXPERIMENT_NAME = "ArchiveII_simfold_128_fold0"
-EXPERIMENT_NAME = "ArchiveII_test3"
+EXPERIMENT_NAME = "ArchiveII_test_newexp"
 
 BASE_CONFIG_PATH = "configs/train/default.yaml"
 # PARTITIONS = ["sim60", "sim70", "sim80", "sim90"]
 PARTITIONS = ["sim70"] 
-TIMESTEPS = [5]
+TIMESTEPS = [25]
 BASE_DIM = [64]
-EPOCHS = 2
+EPOCHS = 1
 
 PRECISION="16-mixed"
 
