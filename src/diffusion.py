@@ -59,12 +59,33 @@ class DiffusionModel(nn.Module):
         self.register_buffer("one_minus_alphas_bar", one_minus_alphas_bar)
         
         # buffer de Lt para nll estocastico VER
+        
 
-    def _prepare_backbone_inputs(self, xt_input, condition, mask=None):
-        if mask is None:
+    def x_to_one_hot(self, x, from_one_hot = True):
+        if from_one_hot:
+            return x.float()
+        else:
+            # x is [B, H, W], convert to one-hot [B, C, H, W]
+            return F.one_hot(x, num_classes=self.num_classes).permute(0, 3, 1, 2).float()
+
+    def _lengths_to_mask(self, lengths, padded_length, device=None):
+        if lengths is None:
+            return None
+        if device is None:
+            device = self.alphas.device
+        lengths_t = tr.as_tensor(lengths, device=device, dtype=tr.long)
+        rng = tr.arange(padded_length, device=device)
+        valid_1d = rng[None, :] < lengths_t[:, None]
+        valid_2d = valid_1d[:, :, None] & valid_1d[:, None, :]
+        return valid_2d.unsqueeze(1)
+
+    def _prepare_backbone_inputs(self, xt_input, condition, lengths=None):
+        xt_input = self.x_to_one_hot(xt_input, False)
+        if lengths is None:
             return xt_input, condition
 
-        xt_fill = tr.zeros_like(xt_input)
+        mask = self._lengths_to_mask(lengths, xt_input.shape[-1], device=xt_input.device)
+        xt_fill = tr.zeros_like(xt_input) # [B, C, H, W]
         xt_fill[:, 0, :, :] = 1.0
         valid_xt = mask.expand_as(xt_input)
         valid_cond = mask.expand_as(condition)
@@ -72,6 +93,34 @@ class DiffusionModel(nn.Module):
         xt_backbone = tr.where(valid_xt, xt_input, xt_fill)
         cond_backbone = tr.where(valid_cond, condition, tr.zeros_like(condition))
         return xt_backbone, cond_backbone
+    
+    def _gumbel_sample(self, logits, dim=1):
+        uniform = tr.rand_like(logits)
+        gumbel_noise = -tr.log(-tr.log(uniform + 1e-30) + 1e-30)
+        sampled = (gumbel_noise + logits).argmax(dim=dim) # [B, L, L]
+        return sampled
+    
+    def sample_categorical(self, logits, lengths=None):
+        if lengths is None:
+            return  self._gumbel_sample(logits, dim=1)
+             
+
+        B, C, L, _ = logits.shape
+        out = tr.zeros(B, L, L, device=logits.device, dtype=tr.long)
+
+        for b, l in enumerate(lengths):
+            l = int(l)
+            logits_b = logits[b, :, :l, :l]
+            out[b, :l, :l] = self._gumbel_sample(logits_b, dim=0)
+        return out
+    
+    
+    def sample_from_probs(self, probs, lengths=None):
+        # probs: [B, C, H, W]
+        probs = tr.clamp(probs, min=1e-30)
+        probs = probs / (probs.sum(dim=1, keepdim=True) + 1e-8)
+        logits = tr.log(probs) 
+        return self.sample_categorical(logits, lengths=lengths)  #  [B,H,W]
     
     
     def q_pred(self, x0, t):
@@ -88,7 +137,7 @@ class DiffusionModel(nn.Module):
         # La distribución qt es una mezcla entre la distribución one-hot y la distribución uniforme
         # q(xt|x0) 
         probs = alphas_bar * x0 + one_minus_alphas_bar / self.num_classes
-        return probs
+        return probs # [B, C, H, W]
     
     def q_step(self, xt_1, t):
         """ Dada una imagen xt_1 y un tiempo t, obtiene q(xt|xt_1)
@@ -98,21 +147,16 @@ class DiffusionModel(nn.Module):
         """
     
         # le agrego al mapa de contactos la clase 0/1
-       # Convertir indices a One-Hot y mover canales al lugar 1: [B, L, L, 2] -> [B, 2, L, L]
-       
-        if xt_1.dim() == 4:
-            xt_1_one_hot = xt_1 # Ya es vector [B, C, H, W]
-        else:
-            xt_1_one_hot = F.one_hot(xt_1, num_classes=self.num_classes).permute(0, 3, 1, 2).float() 
-        
+        xt_1_one_hot = self.x_to_one_hot(xt_1, from_one_hot=False)
+ 
         # el vector alphas_t tiene que tener shape (batch_size, 1, 1, 1) para que la multiplicacion de matrices funcione
         alphas_t = extract(self.alphas, t, xt_1_one_hot.shape)
         one_minus_alpha_t = extract(self.one_minus_alphas, t, xt_1_one_hot.shape)
         # La distribución qt es una mezcla entre la distribución one-hot y la distribución uniforme
         qxt = alphas_t * xt_1_one_hot + one_minus_alpha_t / self.num_classes
-        return qxt 
+        return qxt  # [B, C, H, W]
 
-    def q_posterior(self, x0, xt, t):
+    def q_posterior(self, x0_oh, xt, t):
         """ Dada una imagen xt, una x0 y un tiempo t, calcula la distribución q(xt-1|xt,x0)
         xt: tensor de shape (batch_size, height, width) con valores enteros entre 0 y num_classes-1
         x0: tensor de shape (batch_size, height, width) con valores enteros entre 0 y num_classes-1
@@ -120,22 +164,16 @@ class DiffusionModel(nn.Module):
         return: tensor de shape (batch_size, height, width, num_classes) con las probabilidades de cada clase en cada pixel           
         """
         
-         # Caso 1: Son índices [B, L, L] -> Necesita One-Hot
-        if x0.dim() == 3:
-             x0_vec = F.one_hot(x0.long(), num_classes=self.num_classes).permute(0, 3, 1, 2).float()
-        
-        # Caso 2: Ya es One-Hot o Probabilidades [B, 2, L, L] -> Solo aseguramos float
-        elif x0.dim() == 4:
-             x0_vec = x0.float()
+        x0_one_hot = self.x_to_one_hot(x0_oh, from_one_hot=True)
         
         # q(xt-1 | xt, x0) = q(xt | xt-1, x0) * q(xt-1 | x0) / q(xt | x0)
         # where q(xt | xt-1, x0) = q(xt | xt-1).
                 
         t_1 = tr.clamp(t-1, min=0) # t-1, pero no menor a 0
-        qxt_1_given_x0 = self.q_pred(x0_vec, t_1)  # q(xt-1|x0)
+        qxt_1_given_x0 = self.q_pred(x0_one_hot, t_1)  # q(xt-1|x0)
         
         qxt_1_given_x0 = tr.where(t.view(-1, 1, 1, 1) == 0,
-                                  x0_vec,
+                                  x0_one_hot,
                                   qxt_1_given_x0
                                   )  # Si t=0, entonces xt-1 = x0
         # q(xt|xt-1)
@@ -148,92 +186,59 @@ class DiffusionModel(nn.Module):
         posterior = posterior / (posterior.sum(dim=1, keepdim=True) + 1e-8)
         return posterior 
         
-    def predict_start(self, xt, t, condition, mask=None, return_logits=False):
-            if xt.dim() == 4:
-                xt_input = xt
-            else:
-                xt_input = F.one_hot(xt, num_classes=self.num_classes).permute(0, 3, 1, 2).float()
 
-            xt_input, condition = self._prepare_backbone_inputs(xt_input, condition, mask=mask)
+    def predict_start(self, xt, t, condition, lengths=None, return_logits=False): 
+            # takes xt [B,H,W] and condition [B,C,H,W]
+            xt_input, condition = self._prepare_backbone_inputs(xt, condition, lengths=lengths)
+             # now xt_input is [B,C,H,W] one-hot, with padding handled, and condition is also padded
             unet_input = tr.cat([xt_input, condition], dim=1)
             out = self.diffuser(unet_input, t)
 
             if return_logits:
                 return out
             return F.softmax(out, dim=1)
+  
     
-    def pred_p_xt_1_from_xt(self, xt, t, condition, mask=None):
-        pred = self.predict_start(xt, t, condition, mask=mask)
+    def pred_p_xt_1_from_xt(self, xt, t, condition, lengths=None):
+        pred = self.predict_start(xt, t, condition, lengths=lengths)
         return self.q_posterior(pred, xt, t)
-        
-    def sample_from_probs(self, probs, mask=None):
-        batch_size, num_classes, height, width = probs.shape
 
-        probs = tr.clamp(probs.permute(0, 2, 3, 1), min=0.0)   # [B, H, W, C]
-        probs = probs / (probs.sum(dim=-1, keepdim=True) + 1e-8)
-
-        if mask is not None:
-            valid = mask.squeeze(1)   # [B, H, W]
-            sampled = tr.zeros((batch_size, height, width), device=probs.device, dtype=tr.long)
-            sampled[valid] = tr.multinomial(probs[valid], 1).squeeze(-1)
-            return sampled
-
-        sampled = tr.multinomial(
-            probs.reshape(-1, num_classes), 1
-        ).squeeze(-1)
-
-        return sampled.reshape(batch_size, height, width)
-    
-    def q_sample(self, x0_oh, t, gumbel=True, temperature=1.0):
-        # x0_oh: [B, num_classes, H, W] (Debe ser One-Hot float)
-        
-        # 1. Obtener probabilidades q(xt|x0)
+    def q_sample(self, x0_oh, t, lengths=None):
         qxt_probs = self.q_pred(x0_oh, t)
-        qxt_probs = tr.clamp(qxt_probs, min=1e-20, max=1.0)
-        if gumbel:
-            # Gumbel-Softmax: Retorna Tensor Soft [B, C, H, W] diferenciable
-            # epsilon para evitar log(0)
-            eps = 1e-30
-            logits = tr.log(qxt_probs + eps)
-            # hard=False para que sea diferenciable
-            return F.gumbel_softmax(logits, tau=temperature, hard=False, dim=1)
-        else:
-            # Muestreo normal (Indices) - No diferenciable
-            probs_perm = qxt_probs.permute(0, 2, 3, 1) # [B, H, W, C]
-            sample_idx = tr.distributions.Categorical(probs_perm).sample()
-            return sample_idx
+        qxt_probs = tr.clamp(qxt_probs, min=1e-20, max=1.0) 
+        return self.sample_from_probs(qxt_probs, lengths=lengths)
 
     @tr.no_grad()
-    def p_sample(self, xt, t, condition, mask=None):
+    def p_sample(self, xt, t, condition, lengths=None):
         # Get posterior probabilities [B, 2, L, L] considering the mask        
-        posterior_probs = self.pred_p_xt_1_from_xt(xt, t, condition, mask=mask)
+        posterior_probs = self.pred_p_xt_1_from_xt(xt, t, condition, lengths=lengths)
         # Sample from the predicted distribution considering the mask
-        out = self.sample_from_probs(posterior_probs, mask=mask)
+        out = self.sample_from_probs(posterior_probs, lengths=lengths)
         return out
 
 
     @tr.no_grad()
-    def p_sample_loop(self, shape, condition, mask=None):
+    def p_sample_loop(self, shape, condition, lengths=None):
         """Sample an image from pure noise."""
         batch_size = shape[0]
         device = self.alphas.device
-        # strart from pure noise (uniform distribution)
+        # start from pure noise (uniform distribution)
         xt = tr.randint(0, self.num_classes, shape, device=device).long()
 
         for t in reversed(range(0, self.time_steps)):
             t_batch = tr.full((batch_size,), t, device=device, dtype=tr.long)
-            xt = self.p_sample(xt, t_batch, condition, mask=mask)
+            xt = self.p_sample(xt, t_batch, condition, lengths=lengths)
         return xt
 
     
     @tr.no_grad()
-    def sample(self, condition, mask=None):
+    def sample(self, condition, lengths=None):
         # batch_size, height, width, dim=1 -> channel
         shape = (condition.shape[0], condition.shape[2], condition.shape[3])
-        samples = self.p_sample_loop(shape, condition, mask=mask)
+        samples = self.p_sample_loop(shape, condition, lengths=lengths)
         return samples
     
-    def compute_vlb(self, x0_oh, xt, t, condition, mask=None):
+    def compute_vlb(self, x0_oh, xt, t, condition, lengths=None):
             """
             Calcula VLB considerando la máscara de padding.
             mask: Tensor [B, 1, L, L] (1=Valido, 0=Padding)
@@ -242,7 +247,7 @@ class DiffusionModel(nn.Module):
             true_posterior = self.q_posterior(x0_oh, xt, t) 
             
             # 2. Posterior Predicha
-            pred_x0_probs = self.predict_start(xt, t, condition, mask=mask, return_logits=False)
+            pred_x0_probs = self.predict_start(xt, t, condition, lengths=lengths, return_logits=False)
             pred_posterior = self.q_posterior(pred_x0_probs, xt, t)
             
             # 3. KL Divergence 
@@ -251,21 +256,20 @@ class DiffusionModel(nn.Module):
             pred_posterior = tr.clamp(pred_posterior, min=eps, max=1.0)
             
             kl = true_posterior * (tr.log(true_posterior) - tr.log(pred_posterior))
-            kl_pixelwise = tr.sum(kl, dim=1) # [B, L, L]
+            kl_pixelwise = tr.sum(kl, dim=1)  # [B, L, L]
             
             # Apply mask
             # --- APLICAR MÁSCARA ---
-            if mask is not None: 
-                # check mask shape: [B, 1, L, L] -> [B, L, L]
-                mask_s = mask.squeeze(1) 
-                # Evaluate the kl only on valid pixels
-                kl_valid = kl_pixelwise[mask_s]
-                # average only over valid pixels 
-                return kl_valid.mean()
-                
+            if lengths is not None:
+                valid_means = []
+                for b, l in enumerate(lengths):
+                    l = int(l)
+                    valid_means.append(kl_pixelwise[b, :l, :l].mean())
+                return tr.stack(valid_means).mean()
+
             return kl_pixelwise.mean()
     
-    def forward_all_timesteps(self, x0_oh, condition, mask=None):
+    def forward_all_timesteps(self, x0_oh, condition, lengths=None):
         """
         Calculate the total Loss adding all VLB for each timestep.
         """
@@ -278,9 +282,9 @@ class DiffusionModel(nn.Module):
             # Crear batch de tiempos constantes para este paso
             t = tr.full((batch_size,), t_step, device=device).long()
             # 1. sample xt ~ q(xt|x0) with gumbel-softmax 
-            xt = self.q_sample(x0_oh, t, gumbel=True, temperature=1.0)
+            xt = self.q_sample(x0_oh, t, lengths=lengths) # [B,H,W] 
             # calculate KL on step t ( Posterior GT || Posterior pred )
-            loss_t = self.compute_vlb(x0_oh, xt, t, condition, mask=mask)
+            loss_t = self.compute_vlb(x0_oh, xt, t, condition, lengths=lengths)
             total_loss += loss_t 
                  
         return total_loss

@@ -1,0 +1,53 @@
+experiment:
+  name: 20260317-1310_Fold0
+  note: ArchiveII_simfold_128 | sim60 fold=0, t=5, e=15
+  seed: 42
+  uuid: 7f44bb07-8037-46d9-972b-83722e24eb2c
+  timestamp: '20260317_131044'
+data:
+  base_path: data/ArchiveII_max_length_128.csv
+  partition_path: data/simfolds/simfolds_max128/ArchiveII_partitions_sim60.csv
+  fold: 0
+model:
+  timesteps: 5
+  num_classes: 2
+  in_channels: 18
+  out_channels: 2
+  base_dim: 64
+training:
+  max_epochs: 15
+  batch_size: 4
+  lr: 0.001
+  num_workers: 2
+  accelerator: auto
+  devices: 1
+  precision: 16-mixed
+logging:
+  save_dir: logs/ArchiveII_simfold_128/sim60/t5
+  tensorboard: true
+  log_every_n_steps: 1
+  experiment_dir: logs/ArchiveII_simfold_128/sim60/t5/20260317-1310_Fold0
+  checkpoint_dir: logs/ArchiveII_simfold_128/sim60/t5/20260317-1310_Fold0/checkpoints
+  metrics_path: logs/ArchiveII_simfold_128/sim60/t5/20260317-1310_Fold0/metrics.csv
+  ensemble_path: logs/ArchiveII_simfold_128/sim60/t5/20260317-1310_Fold0/ensemble.csv
+  ensemble_metadata_path: logs/ArchiveII_simfold_128/sim60/t5/20260317-1310_Fold0/ensemble_metadata.yaml
+  train_log_path: logs/ArchiveII_simfold_128/sim60/t5/20260317-1310_Fold0/train.log
+  raw_samples_dir: logs/ArchiveII_simfold_128/sim60/t5/20260317-1310_Fold0/raw_samples
+  lightning_dir: logs/ArchiveII_simfold_128/sim60/t5/20260317-1310_Fold0/lightning
+ensemble:
+  num_samples: 50
+  base_seed: 42
+  trials: 20
+  consensus_sizes:
+  - 1
+  - 3
+  - 5
+  - 7
+  - 9
+  - 11
+  - 13
+  - 15
+  - 19
+  - 21
+  - 25
+  chunk_size: 25

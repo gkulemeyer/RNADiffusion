@@ -137,4 +137,4 @@ def test_build_dataloader_and_datamodule_contract_are_consistent(tmp_path: Path)
     assert set(batch_from_builder.keys()) == set(batch_from_module.keys())
     assert batch_from_builder["embedding"].shape == batch_from_module["embedding"].shape
     assert batch_from_builder["conditioning"].shape == batch_from_module["conditioning"].shape
-    assert batch_from_builder["contact_one_hot"].shape == batch_from_module["contact_one_hot"].shape
+    assert batch_from_builder["contact_oh"].shape == batch_from_module["contact_oh"].shape

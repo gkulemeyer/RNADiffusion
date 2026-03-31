@@ -1,0 +1,71 @@
+2026-03-17 13:38:06 | INFO | Starting experiment in logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0
+2026-03-17 13:38:06 | INFO | Resolved config: {
+  "experiment": {
+    "name": "20260317-1338_Fold0",
+    "note": "ArchiveII_simfold_128 | sim80 fold=0, t=25, e=15",
+    "seed": 42,
+    "uuid": "03ce1cf8-4a7c-4fe6-a786-9daa09cf8110",
+    "timestamp": "20260317_133806"
+  },
+  "data": {
+    "base_path": "data/ArchiveII_max_length_128.csv",
+    "partition_path": "data/simfolds/simfolds_max128/ArchiveII_partitions_sim80.csv",
+    "fold": 0
+  },
+  "model": {
+    "timesteps": 25,
+    "num_classes": 2,
+    "in_channels": 18,
+    "out_channels": 2,
+    "base_dim": 64
+  },
+  "training": {
+    "max_epochs": 15,
+    "batch_size": 4,
+    "lr": 0.001,
+    "num_workers": 2,
+    "accelerator": "auto",
+    "devices": 1,
+    "precision": "16-mixed"
+  },
+  "logging": {
+    "save_dir": "logs/ArchiveII_simfold_128/sim80/t25",
+    "tensorboard": true,
+    "log_every_n_steps": 1,
+    "experiment_dir": "logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0",
+    "checkpoint_dir": "logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0/checkpoints",
+    "metrics_path": "logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0/metrics.csv",
+    "ensemble_path": "logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0/ensemble.csv",
+    "ensemble_metadata_path": "logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0/ensemble_metadata.yaml",
+    "train_log_path": "logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0/train.log",
+    "raw_samples_dir": "logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0/raw_samples",
+    "lightning_dir": "logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0/lightning"
+  },
+  "ensemble": {
+    "num_samples": 50,
+    "base_seed": 42,
+    "trials": 20,
+    "consensus_sizes": [
+      1,
+      3,
+      5,
+      7,
+      9,
+      11,
+      13,
+      15,
+      19,
+      21,
+      25
+    ],
+    "chunk_size": 25
+  }
+}
+2026-03-17 13:43:57 | INFO | Training metrics saved to logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0/metrics.csv
+2026-03-17 13:43:57 | INFO | Raw Lightning metrics saved to logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0/lightning/metrics_raw.csv
+2026-03-17 13:43:57 | INFO | Generating ensemble samples from /home/gkulemeyer/Documents/Repos/RNADiffusion/logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0/checkpoints/best.ckpt
+2026-03-17 13:44:30 | INFO | Evaluating ensemble statistics
+2026-03-17 13:44:34 | INFO | Ensemble analysis saved to logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0/ensemble.csv
+2026-03-17 13:44:34 | INFO | Ensemble summary stats saved to logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0/ensemble_stats.csv
+2026-03-17 13:44:34 | INFO | Ensemble metadata saved to logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0/ensemble_metadata.yaml
+2026-03-17 13:44:34 | INFO | Experiment finished. Logs saved to logs/ArchiveII_simfold_128/sim80/t25/20260317-1338_Fold0

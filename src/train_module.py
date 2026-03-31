@@ -15,22 +15,21 @@ class RNADiffusionModule(L.LightningModule):
 
     def _compute_loss(self, batch):
         return self.model.forward_all_timesteps(
-            batch["contact_one_hot"],
+            batch["contact_oh"],
             batch["conditioning"],
-            mask=batch["mask"],
+            lengths=batch["length"],
         )
 
     def _evaluate_batch(self, batch):
         loss = self._compute_loss(batch)
-        predictions = self.model.sample(batch["conditioning"])
+        predictions = self.model.sample(batch["conditioning"], lengths=batch["length"])
         f1_score = contact_f1(
             predictions,
-            batch["contact_one_hot"],
+            batch["contact_oh"],
             lengths=batch["length"],
             reduce=True,
         )
-        f1_tensor = tr.tensor(f1_score, device=self.device)
-        return loss, f1_tensor
+        return loss, f1_score
 
     def training_step(self, batch, _batch_idx):
         loss = self._compute_loss(batch)
@@ -38,16 +37,16 @@ class RNADiffusionModule(L.LightningModule):
         return loss
 
     def validation_step(self, batch, _batch_idx):
-        loss, f1_tensor = self._evaluate_batch(batch)
+        loss, f1_score = self._evaluate_batch(batch)
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("val_f1", f1_tensor, on_step=False, on_epoch=True, prog_bar=True)
-        return {"val_loss": loss, "val_f1": f1_tensor}
+        self.log("val_f1", f1_score, on_step=False, on_epoch=True, prog_bar=True)
+        return {"val_loss": loss, "val_f1": f1_score}
 
     def test_step(self, batch, _batch_idx):
-        loss, f1_tensor = self._evaluate_batch(batch)
+        loss, f1_score = self._evaluate_batch(batch)
         self.log("test_loss", loss, on_step=False, on_epoch=True)
-        self.log("test_f1", f1_tensor, on_step=False, on_epoch=True)
-        return {"test_loss": loss, "test_f1": f1_tensor}
+        self.log("test_f1", f1_score, on_step=False, on_epoch=True)
+        return {"test_loss": loss, "test_f1": f1_score}
 
     def configure_optimizers(self):
         return tr.optim.Adam(self.model.parameters(), lr=self.learning_rate)

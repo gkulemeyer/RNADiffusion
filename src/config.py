@@ -95,3 +95,19 @@ def build_experiment_name(config):
     timesteps = config["model"]["timesteps"]
     epochs = config["training"]["max_epochs"]
     return f"exp_T{timesteps}_E{epochs}_{timestamp}"
+
+def build_experiment_dir(config):
+    base_dir = Path(config["logging"]["save_dir"])
+    experiment_name = build_experiment_name(config)
+    experiment_dir = base_dir / experiment_name
+
+    if not experiment_dir.exists():
+        return experiment_dir
+
+    suffix = 1
+    while True:
+        candidate = Path(f"{experiment_dir}_{suffix}")
+        if not candidate.exists():
+            return candidate
+        suffix += 1
+

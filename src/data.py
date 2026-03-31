@@ -143,7 +143,7 @@ class SeqDataset(Dataset):
         length = len(sequence)
 
         contact = bp2matrix(length, self.base_pairs[index])
-        contact_one_hot = F.one_hot(contact.long(), num_classes=2).float().permute(2, 0, 1)
+        contact_oh = F.one_hot(contact.long(), num_classes=2).float().permute(2, 0, 1)
         embedding = self.embedding.seq2emb(sequence)
         conditioning = self.embedding.outer_emb(embedding)
 
@@ -154,7 +154,7 @@ class SeqDataset(Dataset):
             "embedding": embedding,
             "conditioning": conditioning,
             "contact": contact,
-            "contact_oh": contact_one_hot,
+            "contact_oh": contact_oh,
         }
 
 ##  (REQUIRES base_pairs or dot-bracket column)
@@ -197,17 +197,17 @@ def pad_batch(batch):
     raw_max_len = max(L)
     # Ceil max length to a multiple of 4 to keep downsampling valid.
     max_len = math.ceil(raw_max_len / 4) * 4 
-    embedding_pad = tr.full((len(batch), batch[0]["embedding"].shape[0], max_len), float('nan')) 
-    conditioning_pad = tr.full((len(batch), batch[0]["conditioning"].shape[0], max_len, max_len), float('nan'))# mask (B, 1, L, L)
+    embedding_pad = tr.zeros((len(batch), batch[0]["embedding"].shape[0], max_len)) 
+    conditioning_pad = tr.zeros((len(batch), batch[0]["conditioning"].shape[0], max_len, max_len))# mask (B, 1, L, L)
     mask_pad = tr.zeros((len(batch), 1, max_len, max_len), dtype=tr.bool)
 
     if batch[0]["contact"] is None:
         contact_pad = None
         contact_oh_pad = None
-    else: 
-        # make nan padding
-        contact_pad = tr.full((len(batch), max_len, max_len), float('nan'))
-        contact_oh_pad = tr.full((len(batch), 2, max_len, max_len), float('nan'))
+    else:  
+        contact_pad = tr.zeros((len(batch), max_len, max_len))
+        contact_oh_pad = tr.zeros((len(batch), 2, max_len, max_len))
+        contact_oh_pad[:, 0, :, :] = 1  # default to no contact
 
     for k in range(len(batch)):
         embedding_pad[k, :, : L[k]] = batch[k]["embedding"]
@@ -227,7 +227,7 @@ def pad_batch(batch):
                  "contact_oh": contact_oh_pad,
                  "mask": mask_pad}
 
-    return out_batch
+    return out_batch 
 
 def build_dataloader(config, partition, batch_size=None, shuffle=False):
     data_config = config["data"]
