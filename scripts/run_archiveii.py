@@ -24,40 +24,47 @@ from src.sweeps import (
 # ------------------------------------------------------------
 # setup
 # ------------------------------------------------------------
-EXPERIMENT_NAME = "ArchiveII_test_max_ts"
-
 BASE_CONFIG_PATH = "configs/train/default.yaml"
-PARTITIONS = ["sim70"]
-TIMESTEPS = [50, 75, 100]
-BASE_DIM = [64]
-EPOCHS = 2
-
-PRECISION = "16-mixed"
-
-FOLD = 0
 RESUME = True
 DRY_RUN = False
-RUN_NAME_TEMPLATE = "{dt}_model_{base_dim}_Fold{fold}"
+PRECISION = "16-mixed"
+BASE_DIM = [32]
 
+BATCH_SIZE = 1
+ACCUMULATE_GRAD_BATCHES = 4
+
+# PARTITIONS = ["sim70"]
+# PARTITIONS = ["sim60", "sim70", "sim80", "sim90"]
+PARTITIONS = ["sim60"]
+# TIMESTEPS = [10, 15, 25, 50, 75, 100, 150, 200, 250]
+TIMESTEPS = [5]
+# EPOCHS = 100
+EPOCHS = 4
+
+
+# EXPERIMENT_NAME = "ArchiveII_100epochs"
+EXPERIMENT_NAME = "ArchiveII_resume_test"
+RUN_NAME_TEMPLATE = "ts_{timesteps}_dt{dt}"
 
 # ------------------------------------------------------------
 # helpers
 # ------------------------------------------------------------
-def build_run_config(base_config, experiment_name, partition, timestep, epochs, fold, base_dim):
+def build_run_config(base_config, experiment_name, partition, timestep, epochs, base_dim):
     config = clone_config(base_config)
 
     dt = datetime.now().strftime("%Y%m%d-%H%M")
-    run_name = RUN_NAME_TEMPLATE.format(dt=dt, fold=fold, base_dim=base_dim)
+    run_name = RUN_NAME_TEMPLATE.format(dt=dt, timesteps=timestep)
 
     config.experiment.name = run_name
-    config.experiment.note = f"{experiment_name} | {partition} fold={fold}, t={timestep}, e={epochs}"
+    config.experiment.note = f"{experiment_name} | {partition}, t={timestep}, e={epochs}"
     config.data.partition_path = f"data/simfolds/simfolds_max128/ArchiveII_partitions_{partition}.csv"
-    config.data.fold = fold
     config.model.timesteps = timestep
     config.model.base_dim = base_dim
     config.training.max_epochs = epochs
     config.training.precision = PRECISION
-    config.logging.save_dir = f"logs/{experiment_name}/{partition}/t{timestep}/m{base_dim}"
+    config.training.batch_size = BATCH_SIZE
+    config.training.accumulate_grad_batches = ACCUMULATE_GRAD_BATCHES
+    config.logging.save_dir = f"logs/{experiment_name}/{partition}/t{timestep}/bs{BATCH_SIZE}_acc{ACCUMULATE_GRAD_BATCHES}"
 
     return config, run_name
 
@@ -98,7 +105,6 @@ def main():
             partition,
             timestep,
             EPOCHS,
-            FOLD,
             base_dim,
         )
 

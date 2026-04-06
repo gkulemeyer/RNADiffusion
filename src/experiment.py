@@ -115,6 +115,7 @@ def train(config, experiment_dir, logger, resume=None):
         accelerator=train_cfg["accelerator"],
         devices=train_cfg["devices"],
         precision=train_cfg["precision"],
+        accumulate_grad_batches=train_cfg["accumulate_grad_batches"],
         logger=loggers,
         callbacks=[ckpt_cb],
         log_every_n_steps=log_cfg["log_every_n_steps"],

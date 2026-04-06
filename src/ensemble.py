@@ -90,10 +90,10 @@ def generate_raw_samples(model, loader, output_dir, num_samples, base_seed, chun
         lengths = tr.tensor(batch["length"], dtype=tr.long).to(device) 
         sampled = _sample_batch(
             model=model,
-            conditioning=conditioning,
-            lengths=lengths,
-            num_samples=num_samples,
+            base_seed=base_seed,
             lengths = lengths[pending_indices],
+            conditioning=conditioning,
+            num_samples=num_samples,
             chunk_size=chunk_size,
         )
 
