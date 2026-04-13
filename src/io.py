@@ -88,6 +88,7 @@ def write_samples_metadata(
     num_samples,
     base_seed,
     chunk_size,
+    checkpoint_epoch=None,
 ):
     metadata = {
         "checkpoint_path": str(checkpoint_path),
@@ -97,6 +98,8 @@ def write_samples_metadata(
         "chunk_size": int(chunk_size),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
     }
+    if checkpoint_epoch is not None:
+        metadata["checkpoint_epoch"] = int(checkpoint_epoch)
     _write_yaml(metadata, Path(samples_dir) / "samples_metadata.yaml")
     return metadata
 
@@ -112,6 +115,7 @@ def write_ensemble_metadata(
     sample_metadata = load_samples_metadata(samples_dir)
     metadata = {
         "checkpoint_path": sample_metadata.get("checkpoint_path", ""),
+        "checkpoint_epoch": sample_metadata.get("checkpoint_epoch"),
         "samples_dir": str(samples_dir),
         "num_samples": sample_metadata.get("num_samples"),
         "base_seed": sample_metadata.get("base_seed"),
