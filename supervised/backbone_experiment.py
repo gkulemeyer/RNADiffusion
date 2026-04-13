@@ -147,6 +147,7 @@ def train_backbone(config, experiment_dir, logger, resume=None):
         mode="max",
         save_top_k=1,
         save_last=True,
+        every_n_epochs=max(1, int(log_cfg.get("checkpoint_every_n_epochs", 1))),
         auto_insert_metric_name=False,
     )
 
@@ -156,6 +157,7 @@ def train_backbone(config, experiment_dir, logger, resume=None):
         devices=train_cfg["devices"],
         precision=train_cfg["precision"],
         accumulate_grad_batches=train_cfg["accumulate_grad_batches"],
+        check_val_every_n_epoch=max(1, int(train_cfg.get("check_val_every_n_epoch", 1))),
         logger=loggers,
         callbacks=[ckpt_cb],
         log_every_n_steps=log_cfg["log_every_n_steps"],

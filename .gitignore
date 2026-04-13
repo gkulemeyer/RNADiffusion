@@ -8,3 +8,4 @@ __pycache__/
 *.yml
 events.out**
 logs/
+*codex*

@@ -19,6 +19,7 @@ training:
   max_epochs: 10
   batch_size: 4
   accumulate_grad_batches: 1
+  check_val_every_n_epoch: 1
   lr: 0.001
   num_workers: 2
   accelerator: "auto"
@@ -29,3 +30,4 @@ logging:
   save_dir: "logs/RNADiffusion"
   tensorboard: true
   log_every_n_steps: 1
+  checkpoint_every_n_epochs: 1
