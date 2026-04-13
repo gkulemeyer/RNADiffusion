@@ -3,9 +3,9 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 
-from ml_collections import ConfigDict
-import torch as tr
 from src.config import build_experiment_name
+from ml_collections import ConfigDict 
+import torch as tr
 
 
 COMPLETED_RUN_FILES = [
@@ -71,8 +71,7 @@ def last_checkpoint_path(run_dir):
 def completed_epochs(run_dir):
     checkpoint_path = last_checkpoint_path(run_dir)
     if checkpoint_path is None:
-        return None
-
+        return None 
     checkpoint = tr.load(checkpoint_path, map_location="cpu")
     epoch = checkpoint.get("epoch")
     if epoch is None:

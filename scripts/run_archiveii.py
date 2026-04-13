@@ -30,20 +30,19 @@ DRY_RUN = False
 PRECISION = "16-mixed"
 BASE_DIM = [32]
 
-BATCH_SIZE = 1
-ACCUMULATE_GRAD_BATCHES = 4
-
+BATCH_SIZE = 4
+ACCUMULATE_GRAD_BATCHES = 1
 # PARTITIONS = ["sim70"]
 # PARTITIONS = ["sim60", "sim70", "sim80", "sim90"]
 PARTITIONS = ["sim60"]
 # TIMESTEPS = [10, 15, 25, 50, 75, 100, 150, 200, 250]
-TIMESTEPS = [5]
+TIMESTEPS = [10, 50]
 # EPOCHS = 100
-EPOCHS = 4
+EPOCHS = 100
 
 
 # EXPERIMENT_NAME = "ArchiveII_100epochs"
-EXPERIMENT_NAME = "ArchiveII_resume_test"
+EXPERIMENT_NAME = "ArchiveII_acc_grad_100e"
 RUN_NAME_TEMPLATE = "ts_{timesteps}_dt{dt}"
 
 # ------------------------------------------------------------
