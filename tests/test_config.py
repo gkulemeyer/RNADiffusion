@@ -59,6 +59,7 @@ def test_prepare_experiment_config_adds_metadata(tmp_path: Path):
     assert prepared["logging"]["ensemble_path"].endswith("ensemble.csv")
     assert prepared["logging"]["ensemble_metadata_path"].endswith("ensemble_metadata.yaml")
     assert prepared["logging"]["lightning_dir"].endswith("lightning")
+    assert prepared["logging"]["train_log_path"].endswith("run.log")
 
 
 def test_load_config_keeps_invalid_values_without_strict_validation(tmp_path: Path):
@@ -93,7 +94,10 @@ def test_load_config_missing_path_raises(tmp_path: Path):
 def test_load_train_defaults_from_configs():
     defaults = load_train_defaults()
     assert defaults["training"]["batch_size"] == 4
+    assert defaults["training"]["check_val_every_n_epoch"] == 1
     assert defaults["model"]["timesteps"] == 5
+    assert defaults["logging"]["checkpoint_every_n_epochs"] == 1
+    assert defaults["data"]["partition_scheme"] == "simfold"
 
 
 def test_load_ensemble_defaults_from_configs():

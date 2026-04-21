@@ -5,9 +5,9 @@ experiment:
 
 data:
   base_path: "data/ArchiveII_max_length_128.csv"
-  partition_path: "data/others/ArchiveII_splits.csv"
-  partition_scheme: "simfold"
-  fold: 0
+  partition_path: "data/famfold/ArchiveII_famfold.csv"
+  partition_scheme: "famfold"
+  fold: ""
 
 model:
   timesteps: 5

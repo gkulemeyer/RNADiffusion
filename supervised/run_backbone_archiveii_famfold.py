@@ -1,0 +1,190 @@
+#!/usr/bin/env python
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.config import load_config
+from src.sweeps import clone_config, to_config_dict
+
+from supervised.backbone_experiment import (
+    completed_backbone_epochs,
+    evaluate_backbone_checkpoint,
+    last_backbone_checkpoint,
+    run_backbone_experiment,
+)
+
+# ------------------------------------------------------------
+# setup
+# ------------------------------------------------------------
+BASE_CONFIG_PATH = "configs/train/famfold.yaml"
+RESUME = True
+PRECISION = "16-mixed"
+BASE_DIM = [32]
+
+BATCH_SIZE = 1
+ACCUMULATE_GRAD_BATCHES = 4
+LR = 0.001
+TENSORBOARD = True
+
+VAL_EVERY_N_EPOCHS = 1
+CHECKPOINT_EVERY_N_EPOCHS = 1
+
+FOLDS = ["srp", "tRNA", "5s"]
+EPOCHS = 20
+
+EXPERIMENT_NAME = "ArchiveII_backbone_famfold"
+BACKBONE_IN_CHANNELS = 16
+
+
+# ------------------------------------------------------------
+# helpers
+# ------------------------------------------------------------
+def build_job_dir(experiment_name, fold, base_dim, seed):
+    return (
+        Path("supervised")
+        / "logs"
+        / experiment_name
+        / fold
+        / f"bd{base_dim}"
+        / f"bs{BATCH_SIZE}_acc{ACCUMULATE_GRAD_BATCHES}"
+        / f"seed{seed}"
+    )
+
+
+def latest_attempt_dir(job_dir):
+    attempt_dirs = sorted(
+        path for path in Path(job_dir).glob("attempt_*") if path.is_dir()
+    )
+    if not attempt_dirs:
+        return None
+    return attempt_dirs[-1]
+
+
+def next_attempt_dir(job_dir):
+    index = 1
+    while True:
+        attempt_dir = Path(job_dir) / f"attempt_{index:03d}"
+        if not attempt_dir.exists():
+            return attempt_dir
+        index += 1
+
+
+def resolve_run_dir(job_dir, resume):
+    job_dir = Path(job_dir)
+
+    if resume:
+        latest_attempt = latest_attempt_dir(job_dir)
+        if latest_attempt is not None and (latest_attempt / "checkpoints").exists():
+            return latest_attempt
+        return job_dir
+
+    if not job_dir.exists():
+        return job_dir
+    if (job_dir / "checkpoints").exists() or latest_attempt_dir(job_dir) is not None:
+        return next_attempt_dir(job_dir)
+    return job_dir
+
+
+def build_run_config(base_config, experiment_name, repo_root, fold, epochs, base_dim):
+    config = clone_config(base_config)
+    repo_root = Path(repo_root)
+
+    seed = int(config.experiment.seed)
+    job_dir = build_job_dir(experiment_name, fold, base_dim, seed)
+
+    config.experiment.name = job_dir.name
+    config.experiment.note = (
+        f"{experiment_name} | {fold}, bd={base_dim}, e={epochs}, "
+        f"val={VAL_EVERY_N_EPOCHS}, ckpt={CHECKPOINT_EVERY_N_EPOCHS}"
+    )
+    config.data.base_path = str(repo_root / "data" / "ArchiveII_max_length_128.csv")
+    config.data.partition_path = str(repo_root / "data" / "famfold" / "ArchiveII_famfold.csv")
+    config.data.partition_scheme = "famfold"
+    config.data.fold = fold
+    config.model.in_channels = BACKBONE_IN_CHANNELS
+    config.model.out_channels = 2
+    config.model.base_dim = base_dim
+    config.training.max_epochs = epochs
+    config.training.check_val_every_n_epoch = VAL_EVERY_N_EPOCHS
+    config.training.precision = PRECISION
+    config.training.batch_size = BATCH_SIZE
+    config.training.accumulate_grad_batches = ACCUMULATE_GRAD_BATCHES
+    config.training.lr = LR
+    config.logging.tensorboard = TENSORBOARD
+    config.logging.checkpoint_every_n_epochs = CHECKPOINT_EVERY_N_EPOCHS
+    config.logging.save_dir = str((repo_root / job_dir.parent).resolve())
+
+    return config, repo_root / job_dir
+
+
+# ------------------------------------------------------------
+# main
+# ------------------------------------------------------------
+def main():
+    repo_root = REPO_ROOT
+    base_config = to_config_dict(load_config(repo_root / BASE_CONFIG_PATH))
+
+    jobs = [(fold, base_dim) for fold in FOLDS for base_dim in BASE_DIM]
+
+    for index, (fold, base_dim) in enumerate(jobs, start=1):
+        config, job_dir = build_run_config(
+            base_config,
+            EXPERIMENT_NAME,
+            repo_root,
+            fold,
+            EPOCHS,
+            base_dim,
+        )
+        run_dir = resolve_run_dir(job_dir, RESUME)
+
+        print(f"\n[{index}/{len(jobs)}] {run_dir}")
+
+        base_path = Path(config.data.base_path)
+        partition_path = Path(config.data.partition_path)
+        if not base_path.exists():
+            raise FileNotFoundError(f"Dataset file not found: {base_path}")
+        if not partition_path.exists():
+            raise FileNotFoundError(f"Partition file not found: {partition_path}")
+
+        config.experiment.name = run_dir.name
+
+        resume_ckpt = last_backbone_checkpoint(run_dir) if run_dir.exists() else None
+        current_epoch = completed_backbone_epochs(run_dir) if run_dir.exists() else 0
+
+        if run_dir.exists():
+            print(f"[RESUME] {run_dir} from epoch {current_epoch}")
+
+        if current_epoch < EPOCHS:
+            result = run_backbone_experiment(
+                config.to_dict(),
+                experiment_dir=run_dir,
+                resume=str(resume_ckpt) if resume_ckpt is not None else None,
+            )
+            run_dir = Path(result["experiment_dir"])
+            resume_ckpt = Path(result["last_checkpoint"])
+            current_epoch = completed_backbone_epochs(run_dir)
+            print(f"[TRAIN] reached epoch {current_epoch} in {run_dir}")
+        else:
+            print(f"[TRAIN] already complete at epoch {current_epoch}")
+
+        if resume_ckpt is None:
+            raise FileNotFoundError(f"Last checkpoint not found in {run_dir / 'checkpoints'}")
+
+        summary_path = run_dir / "test_summary.csv"
+        evaluate_backbone_checkpoint(
+            load_config(run_dir / "config.yaml"),
+            resume_ckpt,
+            run_dir=run_dir,
+            output_path=summary_path,
+        )
+        print(f"[TEST] wrote {summary_path}")
+        print(f"[DONE] {run_dir}")
+
+
+if __name__ == "__main__":
+    main()

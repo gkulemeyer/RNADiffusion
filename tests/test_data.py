@@ -25,7 +25,13 @@ def test_load_partitioned_data_filters_partition_and_fold(tmp_path: Path):
         ]
     ).to_csv(partitions_path, index=False)
 
-    filtered = _load_partitioned_data(data_path, partitions_path, "train", fold_number=0)
+    filtered = _load_partitioned_data(
+        data_path,
+        partitions_path,
+        "train",
+        fold_value=0,
+        partition_scheme="simfold",
+    )
     assert filtered["id"].tolist() == ["a"]
 
 
@@ -37,7 +43,13 @@ def test_load_partitioned_data_requires_columns(tmp_path: Path):
     pd.DataFrame([{"id": "a"}]).to_csv(partitions_path, index=False)
 
     with pytest.raises(ValueError):
-        _load_partitioned_data(data_path, partitions_path, "train", fold_number=0)
+        _load_partitioned_data(
+            data_path,
+            partitions_path,
+            "train",
+            fold_value=0,
+            partition_scheme="simfold",
+        )
 
 
 def test_load_partitioned_data_errors_when_partition_missing(tmp_path: Path):
@@ -48,7 +60,42 @@ def test_load_partitioned_data_errors_when_partition_missing(tmp_path: Path):
     pd.DataFrame([{"id": "a", "partition": "valid", "fold_number": 0}]).to_csv(partitions_path, index=False)
 
     with pytest.raises(ValueError, match="Available partitions"):
-        _load_partitioned_data(data_path, partitions_path, "train", fold_number=0)
+        _load_partitioned_data(
+            data_path,
+            partitions_path,
+            "train",
+            fold_value=0,
+            partition_scheme="simfold",
+        )
+
+
+def test_load_partitioned_data_filters_partition_and_family_for_famfold(tmp_path: Path):
+    data_path = tmp_path / "data.csv"
+    partitions_path = tmp_path / "famfold.csv"
+
+    pd.DataFrame(
+        [
+            {"id": "a", "sequence": "AC", "base_pairs": "[]"},
+            {"id": "b", "sequence": "GU", "base_pairs": "[]"},
+            {"id": "c", "sequence": "CG", "base_pairs": "[]"},
+        ]
+    ).to_csv(data_path, index=False)
+    pd.DataFrame(
+        [
+            {"id": "a", "partition": "train", "fold": "23s"},
+            {"id": "b", "partition": "valid", "fold": "23s"},
+            {"id": "c", "partition": "train", "fold": "16s"},
+        ]
+    ).to_csv(partitions_path, index=False)
+
+    filtered = _load_partitioned_data(
+        data_path,
+        partitions_path,
+        "train",
+        fold_value="23s",
+        partition_scheme="famfold",
+    )
+    assert filtered["id"].tolist() == ["a"]
 
 
 def test_seq_dataset_builds_base_pairs_from_structure(tmp_path: Path):
@@ -72,7 +119,8 @@ def test_seq_dataset_builds_base_pairs_from_structure(tmp_path: Path):
         base_path=data_path,
         partition_path=partitions_path,
         partition_value="train",
-        fold_number=0,
+        fold_value=0,
+        partition_scheme="simfold",
     )
     assert dataset.base_pairs[0] == [[1, 2]]
     assert dataset.base_pairs[1] == []
@@ -102,6 +150,7 @@ def test_build_dataloader_and_datamodule_contract_are_consistent(tmp_path: Path)
         "data": {
             "base_path": str(data_path),
             "partition_path": str(partitions_path),
+            "partition_scheme": "simfold",
             "fold": 0,
         },
         "model": {

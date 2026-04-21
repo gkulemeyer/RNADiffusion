@@ -26,6 +26,33 @@ from src.io import (
 )
 from src.train_module import RNADiffusionModule
 
+
+def periodic_checkpoint_dir(experiment_dir):
+    return Path(experiment_dir) / "checkpoints" / "periodic"
+
+
+def checkpoint_completed_epoch(checkpoint_path):
+    checkpoint = tr.load(checkpoint_path, map_location="cpu")
+    epoch = checkpoint.get("epoch")
+    if epoch is None:
+        raise ValueError(f"Checkpoint does not contain epoch metadata: {checkpoint_path}")
+    return int(epoch) + 1
+
+
+def list_periodic_checkpoints(experiment_dir):
+    checkpoint_paths = sorted(periodic_checkpoint_dir(experiment_dir).glob("*.ckpt"))
+    return sorted(checkpoint_paths, key=checkpoint_completed_epoch)
+
+
+def normalize_periodic_checkpoint_names(experiment_dir):
+    checkpoint_dir = periodic_checkpoint_dir(experiment_dir)
+    for checkpoint_path in sorted(checkpoint_dir.glob("*.ckpt")):
+        epoch = checkpoint_completed_epoch(checkpoint_path)
+        target_path = checkpoint_dir / f"epoch{epoch:03d}.ckpt"
+        if checkpoint_path == target_path or target_path.exists():
+            continue
+        checkpoint_path.rename(target_path)
+
 def prepare_run(config, experiment_dir=None):
     config = prepare_experiment_config(config)
 
@@ -55,22 +82,18 @@ def handle_metrics(loggers, config, resume=False):
     log_cfg = config["logging"]
 
     src = Path(csv_logger.log_dir) / "metrics.csv"
-    dst_raw = Path(log_cfg["lightning_dir"]) / "metrics_raw.csv"
     dst = Path(log_cfg["metrics_path"])
 
-    dst_raw.parent.mkdir(parents=True, exist_ok=True)
+    dst.parent.mkdir(parents=True, exist_ok=True)
 
-    if dst_raw.exists() and resume:
-        prev = dst_raw.read_text()
-        new = src.read_text()
-        dst_raw.write_text(prev + new)
-        src.unlink()
-    else:
-        shutil.move(src, dst_raw)
+    rows = []
+    if resume and dst.exists():
+        with dst.open() as handle:
+            rows.extend(csv.DictReader(handle))
 
-    # compact CSV 
-    with dst_raw.open() as f:
-        rows = list(csv.DictReader(f))
+    with src.open() as handle:
+        rows.extend(csv.DictReader(handle))
+    src.unlink()
 
     grouped = {}
     keys = []
@@ -89,24 +112,34 @@ def handle_metrics(loggers, config, resume=False):
         writer.writeheader()
         writer.writerows(grouped.values())
 
-    return dst, dst_raw
+    return dst
 
 
 def train(config, experiment_dir, logger, resume=None):
     log_cfg = config["logging"]
     train_cfg = config["training"]
+    checkpoint_interval = max(1, int(log_cfg.get("checkpoint_every_n_epochs", 1)))
 
     data = RNADataModule(config)
     model = RNADiffusionModule(config)
     loggers = build_loggers(config, experiment_dir)
 
-    ckpt_cb = ModelCheckpoint(
+    best_ckpt_cb = ModelCheckpoint(
         dirpath=experiment_dir / "checkpoints",
         filename="best",
         monitor="val_f1",
         mode="max",
         save_top_k=1,
-        save_last=True,
+        save_last=False,
+        auto_insert_metric_name=False,
+    )
+    periodic_ckpt_cb = ModelCheckpoint(
+        dirpath=periodic_checkpoint_dir(experiment_dir),
+        filename="epoch{epoch:03d}",
+        monitor=None,
+        save_top_k=-1,
+        save_last=False,
+        every_n_epochs=checkpoint_interval,
         auto_insert_metric_name=False,
     )
 
@@ -116,23 +149,28 @@ def train(config, experiment_dir, logger, resume=None):
         devices=train_cfg["devices"],
         precision=train_cfg["precision"],
         accumulate_grad_batches=train_cfg["accumulate_grad_batches"],
+        check_val_every_n_epoch=max(1, int(train_cfg.get("check_val_every_n_epoch", 1))),
         logger=loggers,
-        callbacks=[ckpt_cb],
+        callbacks=[best_ckpt_cb, periodic_ckpt_cb],
         log_every_n_steps=log_cfg["log_every_n_steps"],
     )
-
     trainer.fit(model, datamodule=data, ckpt_path=resume)
+
+    last_ckpt_path = Path(experiment_dir) / "checkpoints" / "last.ckpt"
+    last_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+    trainer.save_checkpoint(last_ckpt_path)
+    normalize_periodic_checkpoint_names(experiment_dir)
 
     handle_metrics(loggers, config, resume=resume is not None)
 
-    ckpt = ckpt_cb.best_model_path or ckpt_cb.last_model_path
+    ckpt = best_ckpt_cb.best_model_path or str(last_ckpt_path)
     if not ckpt:
         raise RuntimeError("No checkpoint produced")
 
     logger.info("Training done. Checkpoint: %s", ckpt)
     return ckpt
 
-def evaluate(config, experiment_dir, checkpoint, logger):
+def evaluate(config, experiment_dir, checkpoint, logger, cleanup_raw_samples=False):
     log_cfg = config["logging"]
     ens_cfg = config["ensemble"]
 
@@ -158,6 +196,7 @@ def evaluate(config, experiment_dir, checkpoint, logger):
     write_samples_metadata(
         samples_dir=samples_dir,
         checkpoint_path=checkpoint,
+        checkpoint_epoch=checkpoint_completed_epoch(checkpoint),
         num_samples=ens_cfg["num_samples"],
         base_seed=ens_cfg["base_seed"],
         chunk_size=ens_cfg["chunk_size"],
@@ -187,18 +226,11 @@ def evaluate(config, experiment_dir, checkpoint, logger):
         metadata_path=log_cfg["ensemble_metadata_path"],
     )
 
+    if cleanup_raw_samples:
+        shutil.rmtree(samples_dir, ignore_errors=True)
+
     logger.info("Evaluation done")
-    
-def run_experiment(config, experiment_dir=None, resume=None):
-    config, exp_dir, logger = prepare_run(config, experiment_dir)
 
-    ckpt = train(config, exp_dir, logger, resume)
 
-    evaluate(config, exp_dir, ckpt, logger)
-
-    return {
-        "experiment_dir": str(exp_dir),
-        "checkpoint": str(ckpt),
-        "metrics": config["logging"]["metrics_path"],
-        "ensemble": config["logging"]["ensemble_path"],
-    }
+def periodic_eval_dir(run_dir, epoch):
+    return Path(run_dir) / f"epoch_{int(epoch):03d}"

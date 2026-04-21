@@ -80,7 +80,7 @@ def prepare_experiment_config(config, experiment_dir=""):
         logging_config["metrics_path"] = str(experiment_path / "metrics.csv")
         logging_config["ensemble_path"] = str(experiment_path / "ensemble.csv")
         logging_config["ensemble_metadata_path"] = str(experiment_path / "ensemble_metadata.yaml")
-        logging_config["train_log_path"] = str(experiment_path / "train.log")
+        logging_config["train_log_path"] = str(experiment_path / "run.log")
         logging_config["raw_samples_dir"] = str(experiment_path / "raw_samples")
         logging_config["lightning_dir"] = str(experiment_path / "lightning")
     return prepared
@@ -110,4 +110,3 @@ def build_experiment_dir(config):
         if not candidate.exists():
             return candidate
         suffix += 1
-
