@@ -43,11 +43,13 @@ def extract(a, t, x_shape):
 # ref 2 https://github.com/lucidrains/denoising-diffusion-pytorch/blob/5989f4c77eafcdc6be0fb4739f0f277a6dd7f7d8/denoising_diffusion_pytorch/denoising_diffusion_pytorch.py
 
 class DiffusionModel(nn.Module):
-    def __init__(self, num_classes,  time_steps, model, **kwargs):
+    def __init__(self, num_classes, time_steps, model, loss_type="vb_all", **kwargs):
         super().__init__() 
+        assert loss_type in ('vb_stochastic', 'vb_all')
         self.diffuser = model(**kwargs)
         self.num_classes = num_classes
         self.time_steps = time_steps
+        self.loss_type = loss_type
         
         # about buffers: https://discuss.pytorch.org/t/what-is-the-difference-between-register-buffer-and-register-parameter-of-nn-module/32723
         # 2. Registramos los buffers con shape (T, 1, 1, 1)
@@ -58,7 +60,10 @@ class DiffusionModel(nn.Module):
         self.register_buffer("alphas_bar", alphas_bar)
         self.register_buffer("one_minus_alphas_bar", one_minus_alphas_bar)
         
-        # buffer de Lt para nll estocastico VER
+        # buffer de Lt para nll estocastico 
+        if loss_type == 'vb_stochastic':
+            self.register_buffer('Lt_history', tr.zeros(time_steps))
+            self.register_buffer('Lt_count', tr.zeros(time_steps))
         
 
     def x_to_one_hot(self, x, from_one_hot = True):
@@ -238,6 +243,24 @@ class DiffusionModel(nn.Module):
         samples = self.p_sample_loop(shape, condition, lengths=lengths)
         return samples
     
+
+    def multinomial_kl(self, p, q, lengths=None):
+        eps = 1e-8
+        p = tr.clamp(p, min=eps, max=1.0)
+        q = tr.clamp(q, min=eps, max=1.0)
+        
+        kl = p * (tr.log(p) - tr.log(q))
+        kl_pixelwise = tr.sum(kl, dim=1)  # [B, L, L]
+        
+        if lengths is not None:
+            valid_means = []
+            for b, l in enumerate(lengths):
+                l = int(l)
+                valid_means.append(kl_pixelwise[b, :l, :l].mean())
+            return tr.stack(valid_means).mean()
+
+        return kl_pixelwise.mean()
+
     def compute_vlb(self, x0_oh, xt, t, condition, lengths=None):
             """
             Calcula VLB considerando la máscara de padding.
@@ -250,26 +273,21 @@ class DiffusionModel(nn.Module):
             pred_x0_probs = self.predict_start(xt, t, condition, lengths=lengths, return_logits=False)
             pred_posterior = self.q_posterior(pred_x0_probs, xt, t)
             
-            # 3. KL Divergence 
-            eps = 1e-8
-            true_posterior = tr.clamp(true_posterior, min=eps, max=1.0)
-            pred_posterior = tr.clamp(pred_posterior, min=eps, max=1.0)
-            
-            kl = true_posterior * (tr.log(true_posterior) - tr.log(pred_posterior))
-            kl_pixelwise = tr.sum(kl, dim=1)  # [B, L, L]
-            
-            # Apply mask
-            # --- APLICAR MÁSCARA ---
-            if lengths is not None:
-                valid_means = []
-                for b, l in enumerate(lengths):
-                    l = int(l)
-                    valid_means.append(kl_pixelwise[b, :l, :l].mean())
-                return tr.stack(valid_means).mean()
-
-            return kl_pixelwise.mean()
+            return self.multinomial_kl(true_posterior, pred_posterior, lengths=lengths)
+        
     
-    def forward_all_timesteps(self, x0_oh, condition, lengths=None):
+
+    def kl_prior(self, x0_oh, lengths=None):
+        batch_size = x0_oh.shape[0]
+        device = x0_oh.device
+        ones = tr.ones(batch_size, device=device).long()
+
+        qxT = self.q_pred(x0_oh, t= (self.time_steps - 1) * ones)  # q(xT|x0)
+        half_prob = self.num_classes * tr.ones_like(qxT) # 
+
+        return self.multinomial_kl(qxT, half_prob, lengths=lengths)
+
+    def vb_all(self, x0_oh, condition, lengths=None):
         """
         Calculate the total Loss adding all VLB for each timestep.
         """
@@ -286,5 +304,59 @@ class DiffusionModel(nn.Module):
             # calculate KL on step t ( Posterior GT || Posterior pred )
             loss_t = self.compute_vlb(x0_oh, xt, t, condition, lengths=lengths)
             total_loss += loss_t 
-                 
+        # add time 0, kl prior between q(xT|x0) and p(xT) (uniform distribution)
+        total_loss += self.kl_prior(x0_oh, lengths=lengths)
         return total_loss
+    
+    def sample_time(self, b, device, method='uniform'):
+        if method == 'uniform':
+            t = tr.randint(0, self.num_timesteps, (b,), device=device).long()
+            pt = tr.ones_like(t).float() / self.num_timesteps
+            return t, pt
+        
+        elif method == 'importance':
+            if not (self.Lt_count > 10).all():
+                return self.sample_time(b, device, method='uniform')
+
+            Lt_sqrt = tr.sqrt(self.Lt_history + 1e-10) + 0.0001
+            Lt_sqrt[0] = Lt_sqrt[1] 
+            pt_all = Lt_sqrt / Lt_sqrt.sum()
+
+            t = tr.multinomial(pt_all, num_samples=b, replacement=True)
+            pt = pt_all.gather(dim=0, index=t)
+            return t, pt
+
+        else:
+            raise ValueError
+
+    def vb_stochastic(self, x0_oh, condition, lengths=None):
+        
+        batch_size = x0_oh.shape[0]
+        device = x0_oh.device
+
+        if self.loss_type == 'vb_stochastic': 
+
+            t, pt = self.sample_time(batch_size, device, 'importance') 
+            xt = self.q_sample(x0_oh, t, lengths=lengths)
+            loss_t = self.compute_vlb(x0_oh, xt, t, condition, lengths=lengths)             
+            kl_prior = self.kl_prior(x0_oh, lengths=lengths)
+            # Upweigh loss term of the kl
+            vb_loss = loss_t / pt + kl_prior
+
+            Lt2 = loss_t.pow(2)
+            Lt2_prev = self.Lt_history.gather(dim=0, index=t)
+            new_Lt_history = (0.1 * Lt2 + 0.9 * Lt2_prev).detach()
+            self.Lt_history.scatter_(dim=0, index=t, src=new_Lt_history)
+            self.Lt_count.scatter_add_(dim=0, index=t, src=tr.ones_like(Lt2))
+
+            return -vb_loss 
+
+    def _train_loss(self, x0_oh, condition, lengths=None):
+        if self.loss_type == 'vb_all':
+            return self.vb_all(x0_oh, condition, lengths=lengths)
+        
+        elif self.loss_type == 'vb_stochastic':
+            return self.vb_stochastic(x0_oh, condition, lengths=lengths)
+
+        else:
+            raise ValueError()
