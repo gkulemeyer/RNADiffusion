@@ -17,7 +17,7 @@ from src.run_loop import run_training_and_evaluation
 # ------------------------------------------------------------
 # setup
 # ------------------------------------------------------------
-BASE_CONFIG_PATH = "configs/train/default.yaml"
+BASE_CONFIG_PATH = "configs/train/famfold.yaml"
 RESUME = True
 PRECISION = "16-mixed"
 BASE_DIM = [32]
@@ -26,34 +26,36 @@ BATCH_SIZE = 1
 ACCUMULATE_GRAD_BATCHES = 4
 
 VAL_EVERY_N_EPOCHS = 1
-CHECKPOINT_EVERY_N_EPOCHS = 5 
-PARTITIONS = ["sim60", "sim70"] 
-TIMESTEPS = [10, 25, 50, 75, 100, 150] 
-EPOCHS = 65 
-FOLD = 1
+CHECKPOINT_EVERY_N_EPOCHS = 1
 
-EXPERIMENT_NAME = f"ArchiveII_simfold_fold{FOLD}"
+FOLDS = ["srp", "tRNA"]
+# TIMESTEPS = [10, 15, 25, 50, 75, 100, 150, 200, 250]
+TIMESTEPS = [10, 25, 50]
+# EPOCHS = 100
+EPOCHS = 20
+
+
+EXPERIMENT_NAME = "ArchiveII_famfold"
 
 
 # ------------------------------------------------------------
 # helpers
 # ------------------------------------------------------------
-def build_job_dir(experiment_name, partition, timestep, base_dim, seed, fold):
-    return Path("logs") / experiment_name / partition / f"t{timestep}" / f"bd{base_dim}" / f"bs{BATCH_SIZE}_acc{ACCUMULATE_GRAD_BATCHES}" / f"seed{seed}" / f"fold{fold}"
+def build_job_dir(experiment_name, fold, timestep, base_dim, seed):
+    return Path("logs") / experiment_name / fold / f"t{timestep}" / f"bd{base_dim}" / f"bs{BATCH_SIZE}_acc{ACCUMULATE_GRAD_BATCHES}" / f"seed{seed}"
 
 
-def build_run_config(base_config, experiment_name, partition, timestep, epochs, base_dim):
+def build_run_config(base_config, experiment_name, fold, timestep, epochs, base_dim):
     config = ConfigDict(copy.deepcopy(base_config.to_dict()))
     seed = int(config.experiment.seed)
-    job_dir = build_job_dir(experiment_name, partition, timestep, base_dim, seed, FOLD)
+    job_dir = build_job_dir(experiment_name, fold, timestep, base_dim, seed)
 
     config.experiment.name = job_dir.name
     config.experiment.note = (
-        f"{experiment_name} | {partition}, t={timestep}, bd={base_dim}, e={epochs}, "
+        f"{experiment_name} | {fold}, t={timestep}, bd={base_dim}, e={epochs}, "
         f"val={VAL_EVERY_N_EPOCHS}, ckpt={CHECKPOINT_EVERY_N_EPOCHS}"
     )
-    config.data.partition_path = f"data/simfolds/simfolds_max128/ArchiveII_partitions_{partition}.csv"
-    config.data.fold = FOLD
+    config.data.fold = fold
     config.model.timesteps = timestep
     config.model.base_dim = base_dim
     config.training.max_epochs = epochs
@@ -73,13 +75,13 @@ def main():
     repo_root = REPO_ROOT
     base_config = ConfigDict(load_config(repo_root / BASE_CONFIG_PATH))
 
-    jobs = [(p, t, d) for p in PARTITIONS for t in TIMESTEPS for d in BASE_DIM]
+    jobs = [(f, t, d) for f in FOLDS for t in TIMESTEPS for d in BASE_DIM]
 
-    for i, (partition, timestep, base_dim) in enumerate(jobs, start=1):
+    for i, (fold, timestep, base_dim) in enumerate(jobs, start=1):
         config, job_dir = build_run_config(
             base_config,
             EXPERIMENT_NAME,
-            partition,
+            fold,
             timestep,
             EPOCHS,
             base_dim,

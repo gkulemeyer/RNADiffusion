@@ -62,8 +62,50 @@ def dot2bp(structure):
 
 
 ### Load as a dataset with partitioning
+def _check_columns(dataframe, required_columns):
+    missing_columns = sorted(set(required_columns).difference(dataframe.columns))
+    if missing_columns:
+        raise ValueError(f"Dataset missing columns: {missing_columns}")
 
-def _load_partitioned_data(main_path, partition_path, partition_value, fold_number=None):
+
+def load_partition(partitions, partition_value, fold_value=None, partition_scheme="simfold"):
+    if partition_scheme == "simfold":
+        fold_column = "fold_number"
+    elif partition_scheme == "famfold":
+        fold_column = "fold"
+    else:
+        raise ValueError(f"Unsupported partition scheme: {partition_scheme}")
+    required_columns = {"id", "partition"}
+    if fold_column is not None:
+        required_columns.add(fold_column)
+    _check_columns(partitions, required_columns)
+
+    condition_mask = partitions["partition"] == partition_value
+    if fold_value is not None and fold_column is not None:
+        condition_mask &= partitions[fold_column] == fold_value
+
+    partition_part = partitions.loc[condition_mask]
+
+    if partition_part.empty:
+        available_partitions = sorted(partitions["partition"].dropna().unique().tolist())
+        available_folds = []
+        if fold_column is not None:
+            available_folds = sorted(
+                partitions.loc[
+                    partitions["partition"] == partition_value, fold_column
+                ].dropna().unique().tolist()
+            )
+        details = f"Available partitions: {available_partitions}"
+        if available_folds:
+            details += f"; available folds for partition: {available_folds}"
+        raise ValueError(
+            f"No rows found in partition file for partition={partition_value}, fold={fold_value}. "
+            f"{details}"
+        )
+    return partition_part
+
+
+def _load_partitioned_data(main_path, partition_path, partition_value, fold_value=None, partition_scheme="simfold"):
     """Load the main dataset filtered by partition and optional fold."""
     data = pd.read_csv(main_path)
     partitions = pd.read_csv(partition_path)
@@ -71,63 +113,36 @@ def _load_partitioned_data(main_path, partition_path, partition_value, fold_numb
     if "id" not in data.columns:
         raise ValueError("Main dataset missing required column: id")
 
-    required_columns = {"id", "partition"}
-    if fold_number is not None:
-        required_columns.add("fold_number")
+    partition_part = load_partition(
+        partitions,
+        partition_value,
+        fold_value=fold_value,
+        partition_scheme=partition_scheme,
+    )
 
-    missing_columns = sorted(required_columns.difference(partitions.columns))
-    if missing_columns:
-        raise ValueError(f"Partition file missing columns: {missing_columns}")
-
-    partition_mask = partitions["partition"] == partition_value
-    if fold_number is not None:
-        partition_mask &= partitions["fold_number"] == fold_number
-    partition_frame = partitions.loc[partition_mask]
-
-    if partition_frame.empty:
-        available_partitions = sorted(partitions["partition"].dropna().unique().tolist())
-        available_folds = []
-        if fold_number is not None:
-            available_folds = sorted(
-                partitions.loc[
-                    partitions["partition"] == partition_value, "fold_number"
-                ].dropna().unique().tolist()
-            )
-        details = f"Available partitions: {available_partitions}"
-        if available_folds:
-            details += f"; available folds for partition: {available_folds}"
-        raise ValueError(
-            f"No rows found in partition file for partition={partition_value}, fold={fold_number}. "
-            f"{details}"
-        )
-
-    filtered = data[data["id"].isin(partition_frame["id"])].reset_index(drop=True)
+    filtered = data[data["id"].isin(partition_part["id"])].reset_index(drop=True)
     if filtered.empty:
         raise ValueError(
             f"No samples from main dataset matched partition ids for "
-            f"partition={partition_value}, fold={fold_number}"
+            f"partition={partition_value}, fold={fold_value}"
         )
     return filtered
 
-
-load_partitioned_data = _load_partitioned_data
-
 ### Dataset and dataloader for training and evaluation
 class SeqDataset(Dataset):
-    def __init__(self, base_path, partition_path, partition_value, fold_number=None):
+    def __init__(self, base_path, partition_path, partition_value, fold_value=None, partition_scheme="simfold"):
         data = _load_partitioned_data(
             main_path=base_path,
             partition_path=partition_path,
             partition_value=partition_value,
-            fold_number=fold_number,
+            fold_value=fold_value,
+            partition_scheme=partition_scheme,
         )
 
-        data = _ensure_base_pairs_column(data)
+        data = _check_base_pairs_column(data)
 
         required_columns = {"id", "sequence", "base_pairs"}
-        missing_columns = required_columns.difference(data.columns)
-        if missing_columns:
-            raise ValueError(f"Dataset missing columns: {sorted(missing_columns)}")
+        _check_columns(data, required_columns)
 
         self.ids = data["id"].tolist()
         self.sequences = data["sequence"].tolist()
@@ -158,7 +173,7 @@ class SeqDataset(Dataset):
         }
 
 ##  (REQUIRES base_pairs or dot-bracket column)
-def _ensure_base_pairs_column(dataframe):
+def _check_base_pairs_column(dataframe):
     if "base_pairs" in dataframe.columns:
         if dataframe["base_pairs"].isna().any():
             raise ValueError("Column base_pairs contains missing values")
@@ -236,7 +251,8 @@ def build_dataloader(config, partition, batch_size=None, shuffle=False):
         base_path=data_config["base_path"],
         partition_path=data_config["partition_path"],
         partition_value=partition,
-        fold_number=data_config["fold"],
+        fold_value=data_config["fold"],
+        partition_scheme=data_config.get("partition_scheme", "simfold"),
     )
     return DataLoader(
         dataset=dataset,
@@ -260,7 +276,8 @@ class RNADataModule(L.LightningDataModule):
         dataset_kwargs = {
             "base_path": data_config["base_path"],
             "partition_path": data_config["partition_path"],
-            "fold_number": data_config["fold"],
+            "fold_value": data_config["fold"],
+            "partition_scheme": data_config.get("partition_scheme", "simfold"),
         }
 
         if stage in (None, "fit"):

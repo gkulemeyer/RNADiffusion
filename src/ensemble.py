@@ -12,7 +12,8 @@ from tqdm import tqdm
 class SequenceEnsemble:
     def __init__(self, data_path):
         self.path = Path(data_path)
-        self.data = tr.load(self.path, map_location="cpu")
+        device = "cuda" if tr.cuda.is_available() else "cpu"
+        self.data = tr.load(self.path, map_location=device)
         self.samples = self.data["samples"].float()
         self.target = self.data["target"]
         self.length = int(self.data["length"])

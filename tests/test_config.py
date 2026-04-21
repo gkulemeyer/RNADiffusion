@@ -97,6 +97,7 @@ def test_load_train_defaults_from_configs():
     assert defaults["training"]["check_val_every_n_epoch"] == 1
     assert defaults["model"]["timesteps"] == 5
     assert defaults["logging"]["checkpoint_every_n_epochs"] == 1
+    assert defaults["data"]["partition_scheme"] == "simfold"
 
 
 def test_load_ensemble_defaults_from_configs():
