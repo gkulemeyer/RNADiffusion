@@ -13,4 +13,4 @@ consensus_sizes:
   - 19
   - 21
   - 25
-chunk_size: 25
+chunk_size: 1

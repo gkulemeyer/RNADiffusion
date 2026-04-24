@@ -15,18 +15,18 @@ model:
   loss_type: "vb_all"
   in_channels: 18
   out_channels: 2
-  base_dim: 64
+  base_dim: 32
 
 training:
   max_epochs: 10
-  batch_size: 4
-  accumulate_grad_batches: 1
+  batch_size: 1
+  accumulate_grad_batches: 4
   check_val_every_n_epoch: 1
   lr: 0.001
   num_workers: 2
   accelerator: "auto"
   devices: 1
-  precision: "32"
+  precision: "16-mixed"
 
 logging:
   save_dir: "logs/RNADiffusion"

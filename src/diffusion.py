@@ -17,7 +17,7 @@ def cosine_betas(timesteps, s=0.02):
     x = tr.linspace(0, timesteps, steps, dtype=tr.float32)
     alphas_cumprod = tr.cos(((x / timesteps) + s) / (1 + s) * math.pi * 0.5) ** 2
     alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1]) 
     betas = tr.clip(betas, 0, 0.999)
     betas[0] = 1e-7  
     return betas
@@ -257,9 +257,9 @@ class DiffusionModel(nn.Module):
             for b, l in enumerate(lengths):
                 l = int(l)
                 valid_means.append(kl_pixelwise[b, :l, :l].mean())
-            return tr.stack(valid_means).mean()
+            return tr.stack(valid_means)
 
-        return kl_pixelwise.mean()
+        return kl_pixelwise
 
     def compute_vlb(self, x0_oh, xt, t, condition, lengths=None):
             """
@@ -275,16 +275,14 @@ class DiffusionModel(nn.Module):
             
             return self.multinomial_kl(true_posterior, pred_posterior, lengths=lengths)
         
-    
 
     def kl_prior(self, x0_oh, lengths=None):
         batch_size = x0_oh.shape[0]
         device = x0_oh.device
         ones = tr.ones(batch_size, device=device).long()
 
-        qxT = self.q_pred(x0_oh, t= (self.time_steps - 1) * ones)  # q(xT|x0)
-        half_prob = self.num_classes * tr.ones_like(qxT) # 
-
+        qxT = self.q_pred(x0_oh, t= (self.time_steps - 1) * ones)  # q(xT|x0) 
+        half_prob = tr.ones_like(qxT) / self.num_classes # p(xT) uniform distribution
         return self.multinomial_kl(qxT, half_prob, lengths=lengths)
 
     def vb_all(self, x0_oh, condition, lengths=None):
@@ -306,12 +304,12 @@ class DiffusionModel(nn.Module):
             total_loss += loss_t 
         # add time 0, kl prior between q(xT|x0) and p(xT) (uniform distribution)
         total_loss += self.kl_prior(x0_oh, lengths=lengths)
-        return total_loss
+        return total_loss.mean()
     
     def sample_time(self, b, device, method='uniform'):
         if method == 'uniform':
-            t = tr.randint(0, self.num_timesteps, (b,), device=device).long()
-            pt = tr.ones_like(t).float() / self.num_timesteps
+            t = tr.randint(0, self.time_steps, (b,), device=device).long()
+            pt = tr.ones_like(t).float() / self.time_steps
             return t, pt
         
         elif method == 'importance':
@@ -349,7 +347,7 @@ class DiffusionModel(nn.Module):
             self.Lt_history.scatter_(dim=0, index=t, src=new_Lt_history)
             self.Lt_count.scatter_add_(dim=0, index=t, src=tr.ones_like(Lt2))
 
-            return -vb_loss 
+            return vb_loss.mean()
 
     def _train_loss(self, x0_oh, condition, lengths=None):
         if self.loss_type == 'vb_all':

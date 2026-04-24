@@ -15,7 +15,7 @@ model:
   loss_type: "vb_all"
   in_channels: 18
   out_channels: 2
-  base_dim: 64
+  base_dim: 32
 
 training:
   max_epochs: 10

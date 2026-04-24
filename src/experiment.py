@@ -54,22 +54,23 @@ def normalize_periodic_checkpoint_names(experiment_dir):
         checkpoint_path.rename(target_path)
 
 def prepare_run(config, experiment_dir=None):
-    config = prepare_experiment_config(config)
-
     if experiment_dir is None:
-        experiment_dir = build_experiment_dir(config)
+        base_config = prepare_experiment_config(config)
+        experiment_dir = Path(build_experiment_dir(base_config))
     else:
         experiment_dir = Path(experiment_dir)
-        
+
     config = prepare_experiment_config(config, experiment_dir)
 
     experiment_dir.mkdir(parents=True, exist_ok=True)
     save_config(config, experiment_dir)
-    run_logger = configure_logger(config["logging"]["train_log_path"])
 
+    run_logger = configure_logger(config["logging"]["train_log_path"])
     seed_everything(config["experiment"]["seed"], workers=True)
+
     run_logger.info("Starting experiment in %s", experiment_dir)
     run_logger.info("Resolved config: %s", json.dumps(config, indent=2))
+
     return config, experiment_dir, run_logger
 
 def handle_metrics(loggers, config, resume=False):
