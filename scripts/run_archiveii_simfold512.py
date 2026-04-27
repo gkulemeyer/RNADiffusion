@@ -21,21 +21,23 @@ EXPERIMENT_NAME = f"ArchiveII_simfold_512"
 
 BASE_CONFIG_PATH = "configs/train/default.yaml"
 BASE_PATH ="data/ArchiveII.csv"
+# ENSEMBLE_CONFIG_PATH = "configs/ensemble/default512.yaml"
 
-#PARTITIONS = ["sim50", "sim60", "sim70", "sim80", "sim90"] 
-PARTITIONS = ["sim50"]
-# TIMESTEPS = [25, 50, 100, 250, 500, 1000] 
-TIMESTEPS = [25] 
+PARTITIONS = ["sim50", "sim60", "sim70", "sim80"] #, "sim90"
+# PARTITIONS = ["sim80"]
+TIMESTEPS = [10, 25, 50, 100, 250, 500, 1000]  
 LOSS_TYPE = ["vb_stochastic"] 
 
 BATCH_SIZE = 1
 ACCUMULATE_GRAD_BATCHES = 4
 
+VAL_EVERY_N_EPOCHS = 25
 VAL_EVERY_N_EPOCHS = 1
 CHECKPOINT_EVERY_N_EPOCHS = 25
 
+EPOCHS = 100
 EPOCHS = 1
-RESUME = False
+RESUME = True
 
 # ------------------------------------------------------------
 # helpers
@@ -95,7 +97,7 @@ def main():
         try:    
             run_training_and_evaluation(config, repo_root / job_dir, resume=RESUME)
         except tr.cuda.OutOfMemoryError:
-            print(f"[OOM] OutOfMemoryError for part{p}, timesteps {t} ")
+            print(f"[OOM] OutOfMemoryError for part{partition}, timesteps {timestep} ")
         
 
 if __name__ == "__main__":

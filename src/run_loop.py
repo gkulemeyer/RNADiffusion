@@ -17,7 +17,7 @@ from src.io import configure_logger
 from src.sweeps import completed_epochs, last_checkpoint_path
 
 
-def _layout_dirs(run_root, legacy=False):
+def _save_dir_structure(run_root, legacy=False):
     run_root = Path(run_root)
     return run_root / "train", run_root / "eval" / "best", run_root / "eval" / "periodic"
 
@@ -67,16 +67,6 @@ def _resolve_run_root(config, job_dir, resume):
 
     config.experiment.name = job_dir.name
     return job_dir
-
-
-def _logger_path(train_dir):
-    train_dir = Path(train_dir)
-    if (train_dir / "run.log").exists():
-        return train_dir / "run.log"
-    if (train_dir / "train.log").exists():
-        return train_dir / "train.log"
-    return train_dir / "run.log"
-
 
 def _best_eval_matches_checkpoint(best_eval_dir, best_ckpt):
     metadata_path = Path(best_eval_dir) / "ensemble_metadata.yaml"
@@ -144,7 +134,7 @@ def run_training_and_evaluation(config, job_dir, resume=True):
     requested_ckpt_every = int(config.logging.checkpoint_every_n_epochs)
 
     run_root = _resolve_run_root(config, job_dir, resume)
-    train_dir, best_eval_dir, periodic_eval_root = _layout_dirs(run_root)
+    train_dir, best_eval_dir, periodic_eval_root = _save_dir_structure(run_root)
 
     effective_config = config
     config_path = train_dir / "config.yaml"
@@ -182,7 +172,7 @@ def run_training_and_evaluation(config, job_dir, resume=True):
         done_epochs = 0 if completed is None else min(int(completed), requested_epochs)
         print(f"[TRAIN] reached epoch {done_epochs} in {train_dir}")
     else:
-        logger = configure_logger(_logger_path(train_dir))
+        logger = configure_logger(Path(train_dir) / "run.log")
         print(f"[TRAIN] already complete at epoch {done_epochs}")
 
     _evaluate_periodic_checkpoints(train_dir, periodic_eval_root, logger)

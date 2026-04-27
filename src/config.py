@@ -35,6 +35,9 @@ def load_base_defaults():
     return defaults
 
 def deep_merge(base, override):
+    """
+    Recursively merges two dictionaries.
+    """
     merged = copy.deepcopy(base)
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -92,10 +95,11 @@ def build_experiment_name(config):
     if explicit_name:
         return explicit_name
 
-    timestamp = config["experiment"].get("timestamp") or datetime.now().strftime("%Y%m%d_%H%M%S")
-    timesteps = config["model"]["timesteps"]
-    epochs = config["training"]["max_epochs"]
-    return f"exp_T{timesteps}_E{epochs}_{timestamp}"
+    else:
+        timestamp = config["experiment"].get("timestamp") or datetime.now().strftime("%Y%m%d_%H%M%S")
+        timesteps = config["model"]["timesteps"]
+        epochs = config["training"]["max_epochs"]
+        return f"exp_T{timesteps}_E{epochs}_{timestamp}"
 
 def build_experiment_dir(config):
     base_dir = Path(config["logging"]["save_dir"])
