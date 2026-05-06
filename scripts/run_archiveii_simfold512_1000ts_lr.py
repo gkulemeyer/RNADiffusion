@@ -17,27 +17,26 @@ from src.run_loop import run_training_and_evaluation
 # ------------------------------------------------------------
 # setup
 # ------------------------------------------------------------
-EXPERIMENT_NAME = f"ArchiveII_simfold_512"
+EXPERIMENT_NAME = f"ArchiveII_simfold_512_1000ts_lr_test"
 
 BASE_CONFIG_PATH = "configs/train/default.yaml"
 BASE_PATH ="data/ArchiveII.csv"
 # ENSEMBLE_CONFIG_PATH = "configs/ensemble/default512.yaml"
 
 PARTITIONS = ["sim50", "sim60", "sim70", "sim80"] #, "sim90"
-# PARTITIONS = ["sim80"]
+# PARTITIONS = ["sim50"]
 # TIMESTEPS = [10, 25, 50, 100, 250, 500, 1000]
-TIMESTEPS = [10, 25, 50, 100, 250]
+TIMESTEPS = [1000]
 LOSS_TYPE = ["vb_stochastic"] 
 
 BATCH_SIZE = 1
 ACCUMULATE_GRAD_BATCHES = 4
 
 VAL_EVERY_N_EPOCHS = 25
-VAL_EVERY_N_EPOCHS = 1
-CHECKPOINT_EVERY_N_EPOCHS = 25
+CHECKPOINT_EVERY_N_EPOCHS = 100
 
-EPOCHS = 250 
-RESUME = True
+EPOCHS = 5000
+RESUME = False
 
 # ------------------------------------------------------------
 # helpers

@@ -1,0 +1,6 @@
+checkpoint_path: /home/gkulemeyer/Documents/Repos/RNADiffusion/tmp/run_archiveii_smoke/logs/ts_2_dt20260413-1227/checkpoints/best.ckpt
+samples_dir: /home/gkulemeyer/Documents/Repos/RNADiffusion/tmp/run_archiveii_smoke/logs/ts_2_dt20260413-1227/raw_samples
+num_samples: 1
+base_seed: 42
+chunk_size: 1
+generated_at: '2026-04-13T12:28:27'
