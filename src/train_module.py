@@ -14,7 +14,7 @@ class RNADiffusionModule(L.LightningModule):
         self.save_hyperparameters(config)
 
     def _compute_loss(self, batch):
-        return self.model.forward_all_timesteps(
+        return self.model._train_loss(
             batch["contact_oh"],
             batch["conditioning"],
             lengths=batch["length"],

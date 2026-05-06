@@ -1,6 +1,0 @@
-checkpoint_path: /home/gkulemeyer/Documents/Repos/RNADiffusion/logs/ArchiveII_simfold_128/sim70/t10/20260317-1317_Fold0/checkpoints/best.ckpt
-samples_dir: logs/ArchiveII_simfold_128/sim70/t10/20260317-1317_Fold0/raw_samples
-num_samples: 50
-base_seed: 42
-chunk_size: 25
-generated_at: '2026-03-17T13:18:24'

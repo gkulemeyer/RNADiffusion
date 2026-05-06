@@ -56,7 +56,7 @@ def _sample_batch(model, conditioning, lengths, num_samples, base_seed, chunk_si
         tr.manual_seed(base_seed + generated)
         expanded_conditioning = conditioning.repeat_interleave(current_chunk, dim=0) 
         expanded_lengths = lengths.repeat_interleave(current_chunk)
-        with tr.no_grad():
+        with tr.inference_mode():
             sampled = model.sample(expanded_conditioning, lengths=expanded_lengths)
 
         if sampled.ndim == 4:

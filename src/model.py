@@ -7,6 +7,7 @@ def build_model(config):
     return DiffusionModel(
         num_classes=model_config["num_classes"],
         time_steps=model_config["timesteps"],
+        loss_type = model_config["loss_type"],
         model=SimpleUNet,
         in_channels=model_config["in_channels"],
         out_channels=model_config["out_channels"],

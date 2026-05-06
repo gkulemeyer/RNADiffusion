@@ -4,11 +4,12 @@ import csv
 import json
 import shutil
 from pathlib import Path
+import time
 
 import torch as tr
 from lightning.pytorch import Trainer
 from lightning.pytorch import seed_everything
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint, Callback
 
 from src.config import build_experiment_dir, prepare_experiment_config, save_config
 from src.data import RNADataModule, build_dataloader
@@ -54,22 +55,23 @@ def normalize_periodic_checkpoint_names(experiment_dir):
         checkpoint_path.rename(target_path)
 
 def prepare_run(config, experiment_dir=None):
-    config = prepare_experiment_config(config)
-
     if experiment_dir is None:
-        experiment_dir = build_experiment_dir(config)
+        base_config = prepare_experiment_config(config)
+        experiment_dir = Path(build_experiment_dir(base_config))
     else:
         experiment_dir = Path(experiment_dir)
-        
+
     config = prepare_experiment_config(config, experiment_dir)
 
     experiment_dir.mkdir(parents=True, exist_ok=True)
     save_config(config, experiment_dir)
-    run_logger = configure_logger(config["logging"]["train_log_path"])
 
+    run_logger = configure_logger(config["logging"]["train_log_path"])
     seed_everything(config["experiment"]["seed"], workers=True)
+
     run_logger.info("Starting experiment in %s", experiment_dir)
     run_logger.info("Resolved config: %s", json.dumps(config, indent=2))
+
     return config, experiment_dir, run_logger
 
 def handle_metrics(loggers, config, resume=False):
@@ -115,6 +117,36 @@ def handle_metrics(loggers, config, resume=False):
     return dst
 
 
+class TimingCallback(Callback):
+    def __init__(self, logger): 
+        self.logger = logger
+        self.train_time_s = None
+        self.valid_time_s = None
+    
+    def on_train_epoch_start(self, trainer, pl_module):
+        self.train_epoch_start = time.perf_counter()
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        if self.train_epoch_start is not None:
+            duration = time.perf_counter() - self.train_epoch_start
+            self.logger.info(
+                "Epoch %d train time: %.2f min",
+                trainer.current_epoch, 
+                duration / 60,
+            )
+    
+    def on_validation_epoch_start(self, trainer, pl_module):
+        self.valid_epoch_start = time.perf_counter()
+        
+    def on_validation_epoch_end(self, trainer, pl_module):
+        if self.valid_epoch_start is not None:
+            duration = time.perf_counter() - self.valid_epoch_start
+            self.logger.info(
+                "Epoch %d valid time: %.2f min",
+                trainer.current_epoch,
+                duration / 60,
+            )
+
 def train(config, experiment_dir, logger, resume=None):
     log_cfg = config["logging"]
     train_cfg = config["training"]
@@ -142,7 +174,9 @@ def train(config, experiment_dir, logger, resume=None):
         every_n_epochs=checkpoint_interval,
         auto_insert_metric_name=False,
     )
-
+    timer = TimingCallback(logger)
+    
+ 
     trainer = Trainer(
         max_epochs=train_cfg["max_epochs"],
         accelerator=train_cfg["accelerator"],
@@ -151,10 +185,10 @@ def train(config, experiment_dir, logger, resume=None):
         accumulate_grad_batches=train_cfg["accumulate_grad_batches"],
         check_val_every_n_epoch=max(1, int(train_cfg.get("check_val_every_n_epoch", 1))),
         logger=loggers,
-        callbacks=[best_ckpt_cb, periodic_ckpt_cb],
+        callbacks=[best_ckpt_cb, periodic_ckpt_cb, timer],
         log_every_n_steps=log_cfg["log_every_n_steps"],
     )
-    trainer.fit(model, datamodule=data, ckpt_path=resume)
+    trainer.fit(model, datamodule=data, ckpt_path=resume) 
 
     last_ckpt_path = Path(experiment_dir) / "checkpoints" / "last.ckpt"
     last_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -183,7 +217,8 @@ def evaluate(config, experiment_dir, checkpoint, logger, cleanup_raw_samples=Fal
 
     model = load_model_checkpoint(config, checkpoint, eval_mode=True)
     loader = build_dataloader(config, partition="test", shuffle=False)
-
+    
+    samples_start = time.perf_counter()
     generate_raw_samples(
         model=model,
         loader=loader,
@@ -191,6 +226,16 @@ def evaluate(config, experiment_dir, checkpoint, logger, cleanup_raw_samples=Fal
         num_samples=ens_cfg["num_samples"],
         base_seed=ens_cfg["base_seed"],
         chunk_size=ens_cfg["chunk_size"],
+    )
+
+    samples_time = time.perf_counter() - samples_start
+
+    logger.info(
+        "Timing: samples_generation_time=%.2fs (%.2f min), num_samples=%s, checkpoint=%s",
+        samples_time,
+        samples_time / 60,
+        ens_cfg["num_samples"],
+        Path(checkpoint).stem, 
     )
 
     write_samples_metadata(

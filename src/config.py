@@ -35,6 +35,9 @@ def load_base_defaults():
     return defaults
 
 def deep_merge(base, override):
+    """
+    Recursively merges two dictionaries.
+    """
     merged = copy.deepcopy(base)
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -62,27 +65,28 @@ def save_config(config, output_dir):
     with (output_path / "config.yaml").open("w", encoding="utf-8") as handle:
         yaml.safe_dump(config, handle, sort_keys=False)
 
-
-def prepare_experiment_config(config, experiment_dir=""):
+def prepare_experiment_config(config, experiment_dir=None):
     prepared = deep_merge(load_base_defaults(), config)
+
     experiment = prepared["experiment"]
     logging_config = prepared["logging"]
 
-    if not experiment["uuid"]:
+    if not experiment.get("uuid"):
         experiment["uuid"] = str(uuid4())
-    if not experiment["timestamp"]:
+    if not experiment.get("timestamp"):
         experiment["timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    if experiment_dir:
-        experiment_path = Path(experiment_dir)
-        logging_config["experiment_dir"] = str(experiment_path)
-        logging_config["checkpoint_dir"] = str(experiment_path / "checkpoints")
-        logging_config["metrics_path"] = str(experiment_path / "metrics.csv")
-        logging_config["ensemble_path"] = str(experiment_path / "ensemble.csv")
-        logging_config["ensemble_metadata_path"] = str(experiment_path / "ensemble_metadata.yaml")
-        logging_config["train_log_path"] = str(experiment_path / "run.log")
-        logging_config["raw_samples_dir"] = str(experiment_path / "raw_samples")
-        logging_config["lightning_dir"] = str(experiment_path / "lightning")
+    if experiment_dir is not None:
+        experiment_dir = Path(experiment_dir)
+        logging_config["experiment_dir"] = str(experiment_dir)
+        logging_config["checkpoint_dir"] = str(experiment_dir / "checkpoints")
+        logging_config["metrics_path"] = str(experiment_dir / "metrics.csv")
+        logging_config["ensemble_path"] = str(experiment_dir / "ensemble.csv")
+        logging_config["ensemble_metadata_path"] = str(experiment_dir / "ensemble_metadata.yaml")
+        logging_config["train_log_path"] = str(experiment_dir / "run.log")
+        logging_config["raw_samples_dir"] = str(experiment_dir / "raw_samples")
+        logging_config["lightning_dir"] = str(experiment_dir / "lightning")
+
     return prepared
 
 
@@ -91,10 +95,11 @@ def build_experiment_name(config):
     if explicit_name:
         return explicit_name
 
-    timestamp = config["experiment"].get("timestamp") or datetime.now().strftime("%Y%m%d_%H%M%S")
-    timesteps = config["model"]["timesteps"]
-    epochs = config["training"]["max_epochs"]
-    return f"exp_T{timesteps}_E{epochs}_{timestamp}"
+    else:
+        timestamp = config["experiment"].get("timestamp") or datetime.now().strftime("%Y%m%d_%H%M%S")
+        timesteps = config["model"]["timesteps"]
+        epochs = config["training"]["max_epochs"]
+        return f"exp_T{timesteps}_E{epochs}_{timestamp}"
 
 def build_experiment_dir(config):
     base_dir = Path(config["logging"]["save_dir"])

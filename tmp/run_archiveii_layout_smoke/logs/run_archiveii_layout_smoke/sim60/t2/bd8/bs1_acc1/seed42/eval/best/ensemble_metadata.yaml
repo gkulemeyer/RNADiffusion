@@ -1,0 +1,10 @@
+checkpoint_path: /home/gkulemeyer/Documents/Repos/RNADiffusion/tmp/run_archiveii_layout_smoke/logs/run_archiveii_layout_smoke/sim60/t2/bd8/bs1_acc1/seed42/train/checkpoints/best.ckpt
+checkpoint_epoch: 2
+samples_dir: /home/gkulemeyer/Documents/Repos/RNADiffusion/tmp/run_archiveii_layout_smoke/logs/run_archiveii_layout_smoke/sim60/t2/bd8/bs1_acc1/seed42/eval/best/raw_samples
+num_samples: 1
+base_seed: 42
+trials: 1
+consensus_sizes:
+- 1
+seed: 42
+generated_at: '2026-04-13T19:01:09'

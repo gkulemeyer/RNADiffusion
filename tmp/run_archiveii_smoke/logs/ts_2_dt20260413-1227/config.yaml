@@ -1,0 +1,46 @@
+experiment:
+  name: ts_2_dt20260413-1227
+  note: run_archiveii_smoke | sim60, t=2, e=2
+  seed: 42
+  uuid: d8898954-8bc0-4e0b-83a6-9161d03d32b1
+  timestamp: '20260413_122750'
+data:
+  base_path: data/ArchiveII_max_length_128.csv
+  partition_path: /home/gkulemeyer/Documents/Repos/RNADiffusion/tmp/run_archiveii_smoke/ArchiveII_partitions_smoke.csv
+  fold: 0
+model:
+  timesteps: 2
+  num_classes: 2
+  in_channels: 18
+  out_channels: 2
+  base_dim: 8
+training:
+  max_epochs: 5
+  batch_size: 1
+  accumulate_grad_batches: 1
+  check_val_every_n_epoch: 5
+  lr: 0.001
+  num_workers: 0
+  accelerator: cpu
+  devices: 1
+  precision: '32'
+logging:
+  save_dir: /home/gkulemeyer/Documents/Repos/RNADiffusion/tmp/run_archiveii_smoke/logs
+  tensorboard: false
+  log_every_n_steps: 1
+  checkpoint_every_n_epochs: 5
+  checkpoint_dir: /home/gkulemeyer/Documents/Repos/RNADiffusion/tmp/run_archiveii_smoke/logs/ts_2_dt20260413-1227/checkpoints
+  ensemble_metadata_path: /home/gkulemeyer/Documents/Repos/RNADiffusion/tmp/run_archiveii_smoke/logs/ts_2_dt20260413-1227/ensemble_metadata.yaml
+  ensemble_path: /home/gkulemeyer/Documents/Repos/RNADiffusion/tmp/run_archiveii_smoke/logs/ts_2_dt20260413-1227/ensemble.csv
+  experiment_dir: /home/gkulemeyer/Documents/Repos/RNADiffusion/tmp/run_archiveii_smoke/logs/ts_2_dt20260413-1227
+  lightning_dir: /home/gkulemeyer/Documents/Repos/RNADiffusion/tmp/run_archiveii_smoke/logs/ts_2_dt20260413-1227/lightning
+  metrics_path: /home/gkulemeyer/Documents/Repos/RNADiffusion/tmp/run_archiveii_smoke/logs/ts_2_dt20260413-1227/metrics.csv
+  raw_samples_dir: /home/gkulemeyer/Documents/Repos/RNADiffusion/tmp/run_archiveii_smoke/logs/ts_2_dt20260413-1227/raw_samples
+  train_log_path: /home/gkulemeyer/Documents/Repos/RNADiffusion/tmp/run_archiveii_smoke/logs/ts_2_dt20260413-1227/train.log
+ensemble:
+  num_samples: 1
+  base_seed: 42
+  trials: 1
+  consensus_sizes:
+  - 1
+  chunk_size: 1

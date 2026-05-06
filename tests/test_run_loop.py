@@ -5,7 +5,7 @@ import yaml
 
 from src.run_loop import (
     _best_eval_matches_checkpoint,
-    _layout_dirs,
+    _save_dir_structure,
     _next_attempt_dir,
     _resolve_run_root,
 )
@@ -24,7 +24,7 @@ def make_config(tmp_path: Path):
 
 
 def test_layout_dirs_for_new_runs(tmp_path: Path):
-    train_dir, best_eval_dir, periodic_eval_root = _layout_dirs(tmp_path / "seed42")
+    train_dir, best_eval_dir, periodic_eval_root = _save_dir_structure(tmp_path / "seed42")
 
     assert train_dir == tmp_path / "seed42" / "train"
     assert best_eval_dir == tmp_path / "seed42" / "eval" / "best"

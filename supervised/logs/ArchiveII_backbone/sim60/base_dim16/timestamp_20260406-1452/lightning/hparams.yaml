@@ -1,0 +1,54 @@
+experiment:
+  name: timestamp_20260406-1452
+  note: ArchiveII_backbone | sim60, base_dim=16
+  seed: 42
+  uuid: a3da6d23-02df-452b-96bc-50370806e993
+  timestamp: '20260406_145511'
+data:
+  base_path: /home/gkulemeyer/Documents/Repos/RNADiffusion/data/ArchiveII_max_length_128.csv
+  partition_path: /home/gkulemeyer/Documents/Repos/RNADiffusion/data/simfolds/simfolds_max128/ArchiveII_partitions_sim60.csv
+  fold: 0
+model:
+  timesteps: 5
+  num_classes: 2
+  in_channels: 16
+  out_channels: 2
+  base_dim: 16
+training:
+  max_epochs: 100
+  batch_size: 1
+  accumulate_grad_batches: 4
+  lr: 0.001
+  num_workers: 2
+  accelerator: auto
+  devices: 1
+  precision: 16-mixed
+logging:
+  save_dir: /home/gkulemeyer/Documents/Repos/RNADiffusion/supervised/logs/ArchiveII_backbone/sim60/base_dim16
+  tensorboard: true
+  log_every_n_steps: 1
+  experiment_dir: /home/gkulemeyer/Documents/Repos/RNADiffusion/supervised/logs/ArchiveII_backbone/sim60/base_dim16/timestamp_20260406-1452
+  checkpoint_dir: /home/gkulemeyer/Documents/Repos/RNADiffusion/supervised/logs/ArchiveII_backbone/sim60/base_dim16/timestamp_20260406-1452/checkpoints
+  metrics_path: /home/gkulemeyer/Documents/Repos/RNADiffusion/supervised/logs/ArchiveII_backbone/sim60/base_dim16/timestamp_20260406-1452/metrics.csv
+  ensemble_path: /home/gkulemeyer/Documents/Repos/RNADiffusion/supervised/logs/ArchiveII_backbone/sim60/base_dim16/timestamp_20260406-1452/ensemble.csv
+  ensemble_metadata_path: /home/gkulemeyer/Documents/Repos/RNADiffusion/supervised/logs/ArchiveII_backbone/sim60/base_dim16/timestamp_20260406-1452/ensemble_metadata.yaml
+  train_log_path: /home/gkulemeyer/Documents/Repos/RNADiffusion/supervised/logs/ArchiveII_backbone/sim60/base_dim16/timestamp_20260406-1452/train.log
+  raw_samples_dir: /home/gkulemeyer/Documents/Repos/RNADiffusion/supervised/logs/ArchiveII_backbone/sim60/base_dim16/timestamp_20260406-1452/raw_samples
+  lightning_dir: /home/gkulemeyer/Documents/Repos/RNADiffusion/supervised/logs/ArchiveII_backbone/sim60/base_dim16/timestamp_20260406-1452/lightning
+ensemble:
+  num_samples: 50
+  base_seed: 42
+  trials: 20
+  consensus_sizes:
+  - 1
+  - 3
+  - 5
+  - 7
+  - 9
+  - 11
+  - 13
+  - 15
+  - 19
+  - 21
+  - 25
+  chunk_size: 25
