@@ -23,6 +23,7 @@ BASE_CONFIG_PATH = "configs/train/default.yaml"
 BASE_PATH ="data/ArchiveII.csv"
 # ENSEMBLE_CONFIG_PATH = "configs/ensemble/default512.yaml"
 
+# PARTITIONS = ["sim50", "sim60", "sim70", "sim80"] #, "sim90"
 PARTITIONS = ["sim50", "sim60", "sim70", "sim80"] #, "sim90"
 # PARTITIONS = ["sim50"]
 # TIMESTEPS = [10, 25, 50, 100, 250, 500, 1000]
@@ -35,8 +36,8 @@ ACCUMULATE_GRAD_BATCHES = 4
 VAL_EVERY_N_EPOCHS = 25
 CHECKPOINT_EVERY_N_EPOCHS = 100
 
-EPOCHS = 5000
-RESUME = False
+EPOCHS = 4000
+RESUME = True
 
 # ------------------------------------------------------------
 # helpers

@@ -30,17 +30,17 @@ from supervised.backbone_experiment import (
 # ------------------------------------------------------------
 BASE_CONFIG_PATH = "configs/train/default.yaml"
 PRECISION = "16-mixed"
-BASE_DIM = [16, 32, 48, 64]
+BASE_DIM = [32]
 
 BATCH_SIZE = 1
 ACCUMULATE_GRAD_BATCHES = 4
 LR = 0.001
 TENSORBOARD = True
 
-PARTITIONS = ["sim60", "sim70", "sim80", "sim90"]
-EPOCH_MILESTONES = list(range(5, 101, 5))
+PARTITIONS = ["sim50","sim60", "sim70", "sim80"]
+EPOCH_LIST = list(range(5, 501, 5)) 
 
-EXPERIMENT_NAME = "ArchiveII_backbone"
+EXPERIMENT_NAME = "ArchiveII_backbone_simfold512"
 RUN_NAME_TEMPLATE = "timestamp_{dt}"
 BACKBONE_IN_CHANNELS = 16
 
@@ -60,10 +60,10 @@ def build_run_config(base_config, experiment_name, repo_root, partition, base_di
     config.experiment.note = (
         f"{experiment_name} | {partition}, base_dim={base_dim}"
     )
-    config.data.base_path = str(repo_root / "data" / "ArchiveII_max_length_128.csv")
+    config.data.base_path = str(repo_root / "data" / "ArchiveII.csv")
     config.data.partition_path = str(
-        repo_root / "data" / "simfolds" / "simfolds_max128" / f"ArchiveII_partitions_{partition}.csv"
-    )
+        REPO_ROOT / f"data/simfolds/6_sim_folds/archiveII_similars_splits_less_than_512_k10_NOboostrap_{partition}-fold.csv"
+        )
     config.model.in_channels = BACKBONE_IN_CHANNELS
     config.model.out_channels = 2
     config.model.base_dim = base_dim
@@ -80,11 +80,11 @@ def build_run_config(base_config, experiment_name, repo_root, partition, base_di
     return config, run_name, run_pattern
 
 
-def normalize_milestones(values):
-    milestones = sorted({int(value) for value in values if int(value) > 0})
-    if not milestones:
-        raise ValueError("EPOCH_MILESTONES must contain at least one positive epoch")
-    return milestones
+def normalize_epoch_list(values):
+    epochs = sorted({int(value) for value in values if int(value) > 0})
+    if not epochs:
+        raise ValueError("EPOCH_LIST must contain at least one positive epoch")
+    return epochs
 
 
 def resolve_run_dir(config, run_pattern):
@@ -102,7 +102,7 @@ def resolve_run_dir(config, run_pattern):
 def main():
     repo_root = REPO_ROOT
     base_config = to_config_dict(load_config(repo_root / BASE_CONFIG_PATH))
-    milestones = normalize_milestones(EPOCH_MILESTONES)
+    epochs = normalize_epoch_list(EPOCH_LIST)
 
     jobs = [(partition, base_dim) for partition in PARTITIONS for base_dim in BASE_DIM]
 
@@ -131,20 +131,20 @@ def main():
         if run_dir is not None:
             print(f"[RESUME] {run_dir} from epoch {current_epoch}")
 
-        for milestone in milestones:
-            if milestone_complete(run_dir, milestone) if run_dir is not None else False:
+        for epoch in epochs:
+            if milestone_complete(run_dir, epoch) if run_dir is not None else False:
                 print(f"[SKIP] epoch_{milestone:03d} already snapshotted")
                 continue
 
-            if current_epoch > milestone:
+            if current_epoch > epoch:
                 print(
-                    f"[WARN] current epoch {current_epoch} is past milestone {milestone}; "
+                    f"[WARN] current epoch {current_epoch} is past epoch {epoch}; "
                     "cannot recreate exact checkpoint"
                 )
                 continue
 
-            if current_epoch < milestone:
-                config.training.max_epochs = milestone
+            if current_epoch < epoch:
+                config.training.max_epochs = epoch
                 result = run_backbone_experiment(
                     config.to_dict(),
                     experiment_dir=run_dir,
@@ -156,15 +156,15 @@ def main():
                 print(f"[TRAIN] reached epoch {current_epoch} in {run_dir}")
 
             if resume_ckpt is None:
-                raise FileNotFoundError("Expected last checkpoint after training milestone")
+                raise FileNotFoundError("Expected last checkpoint after training epoch")
 
             summary = evaluate_backbone_checkpoint(
                 load_config(run_dir / "config.yaml"),
                 resume_ckpt,
                 run_dir=run_dir,
-                epoch=milestone,
+                epoch=epoch,
             )
-            snapshot_dir = snapshot_milestone(run_dir, milestone, resume_ckpt, summary)
+            snapshot_dir = snapshot_milestone(run_dir, epoch, resume_ckpt, summary)
             print(f"[TEST] wrote {snapshot_dir / 'test_summary.csv'}")
 
         if run_dir is not None:
