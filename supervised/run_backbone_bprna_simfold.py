@@ -35,15 +35,15 @@ BASE_DIM = [32]
 BATCH_SIZE = 1
 ACCUMULATE_GRAD_BATCHES = 4
 LR = 0.001
-TENSORBOARD = True
+TENSORBOARD = True 
 
-PARTITIONS = ["sim50","sim60", "sim70", "sim80"]
-EPOCH_LIST = list(range(5, 501, 5)) 
+PARTITIONS = ["sim40", "sim50", "sim60", "sim70", "sim80", "sim90"]
+# EPOCH_LIST = list(range(5, 101, 5))
+EPOCH_LIST = [1,2,3]
 
-EXPERIMENT_NAME = "ArchiveII_backbone_simfold512"
+EXPERIMENT_NAME = "bpRNA_backbone_fold0_test"
 RUN_NAME_TEMPLATE = "timestamp_{dt}"
 BACKBONE_IN_CHANNELS = 16
-
 
 # ------------------------------------------------------------
 # helpers
@@ -60,9 +60,11 @@ def build_run_config(base_config, experiment_name, repo_root, partition, base_di
     config.experiment.note = (
         f"{experiment_name} | {partition}, base_dim={base_dim}"
     )
-    config.data.base_path = str(repo_root / "data" / "ArchiveII.csv")
+
+    config.data.base_path = str(repo_root / "data" / "bpRNA" / "bpRNA.csv")
+    # /home/gkulemeyer/Documents/Repos/RNADiffusion/data/bpRNA/NOboostrap
     config.data.partition_path = str(
-        REPO_ROOT / f"data/simfolds/6_sim_folds/archiveII_similars_splits_less_than_512_k10_NOboostrap_{partition}-fold.csv"
+        repo_root / f"data/bpRNA/NOboostrap/bpRNA_similars_splits_less_than_512_k10_NOboostrap_{partition}-fold.csv"
         )
     config.model.in_channels = BACKBONE_IN_CHANNELS
     config.model.out_channels = 2
@@ -83,7 +85,7 @@ def build_run_config(base_config, experiment_name, repo_root, partition, base_di
 def normalize_epoch_list(values):
     epochs = sorted({int(value) for value in values if int(value) > 0})
     if not epochs:
-        raise ValueError("EPOCH_LIST must contain at least one positive epoch")
+        raise ValueError("EPOCH_LIST error")
     return epochs
 
 
@@ -133,7 +135,7 @@ def main():
 
         for epoch in epochs:
             if check_epoch_status(run_dir, epoch) if run_dir is not None else False:
-                print(f"[SKIP] epoch_{milestone:03d} already snapshotted")
+                print(f"[SKIP] epoch_{epoch:03d} already snapshotted")
                 continue
 
             if current_epoch > epoch:

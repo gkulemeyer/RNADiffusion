@@ -283,17 +283,17 @@ def evaluate_backbone_checkpoint(
     return summary
 
 
-def milestone_dir(run_dir, epoch):
+def epoch_dir(run_dir, epoch):
     return Path(run_dir) / f"epoch_{int(epoch):03d}"
 
 
-def milestone_complete(run_dir, epoch):
-    target_dir = milestone_dir(run_dir, epoch)
+def check_epoch_status(run_dir, epoch):
+    target_dir = epoch_dir(run_dir, epoch)
     return (target_dir / "last.ckpt").exists() and (target_dir / "test_summary.csv").exists()
 
 
-def snapshot_milestone(run_dir, epoch, checkpoint_path, summary):
-    target_dir = milestone_dir(run_dir, epoch)
+def save_training_snapshot(run_dir, epoch, checkpoint_path, summary):
+    target_dir = epoch_dir(run_dir, epoch)
     target_dir.mkdir(parents=True, exist_ok=True)
 
     checkpoint_path = Path(checkpoint_path)
