@@ -1,58 +1,45 @@
-import argparse
 from pathlib import Path
 
 from src.config import load_config
-from src.data import build_dataloader
-from src.ensemble import generate_raw_samples
-from src.io import load_model_checkpoint, write_samples_metadata
+from src.experiment import generate_ensemble_samples
+from src.run_io import RunIO
 
 
-def default_samples_dir(checkpoint_path):
-    checkpoint_file = Path(checkpoint_path)
-    return str(checkpoint_file.parent.parent / "raw_samples")
+RUN_DIR = Path("")
+CONFIG_PATH = Path("configs/train/default.yaml")
+CHECKPOINT_PATH = Path("")
+SAMPLES_DIR = Path("")
+
+NUM_SAMPLES = None
+BASE_SEED = None
+BATCH_SIZE = None
+CLEAR_SAMPLES = False
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Generate raw ensemble samples for one checkpoint.")
-    parser.add_argument("--config", required=True, help="Path to config.yaml")
-    parser.add_argument("--checkpoint", required=True, help="Path to .ckpt file")
-    parser.add_argument("--samples-dir", default="", help="Output directory for raw samples")
-    parser.add_argument("--num-samples", type=int, default=0, help="Number of samples per sequence")
-    parser.add_argument("--base-seed", type=int, default=None, help="Base seed for sampling")
-    parser.add_argument("--batch-size", type=int, default=0, help="Optional batch size override")
-    return parser.parse_args()
+def resolve_inputs():
+    if str(RUN_DIR):
+        run = RunIO(RUN_DIR)
+        samples_dir = SAMPLES_DIR if str(SAMPLES_DIR) else run.best_eval_dir / "raw_samples"
+        return run.config_path, run.best_ckpt_path, samples_dir
+    if not str(CHECKPOINT_PATH):
+        raise ValueError("Set RUN_DIR or CHECKPOINT_PATH before running ensemble_generator.py")
+    samples_dir = SAMPLES_DIR if str(SAMPLES_DIR) else CHECKPOINT_PATH.parent.parent / "raw_samples"
+    return CONFIG_PATH, CHECKPOINT_PATH, samples_dir
 
 
 def main():
-    args = parse_args()
-    config = load_config(args.config)
-    loader = build_dataloader(
-        config,
-        partition="test",
-        batch_size=args.batch_size or None,
-        shuffle=False,
-    )
-    model = load_model_checkpoint(config, args.checkpoint, eval_mode=True)
-    samples_dir = args.samples_dir or default_samples_dir(args.checkpoint)
-    ensemble_config = config["ensemble"]
-    num_samples = args.num_samples or ensemble_config["num_samples"]
-    base_seed = ensemble_config["base_seed"] if args.base_seed is None else args.base_seed
-
-    generate_raw_samples(
-        model=model,
-        loader=loader,
-        output_dir=samples_dir,
-        num_samples=num_samples,
-        base_seed=base_seed,
-        chunk_size=ensemble_config["chunk_size"],
-    )
-    write_samples_metadata(
+    config_path, checkpoint_path, samples_dir = resolve_inputs()
+    samples_dir = generate_ensemble_samples(
+        config=load_config(config_path),
+        checkpoint=checkpoint_path,
         samples_dir=samples_dir,
-        checkpoint_path=args.checkpoint,
-        num_samples=num_samples,
-        base_seed=base_seed,
-        chunk_size=ensemble_config["chunk_size"],
+        num_samples=NUM_SAMPLES,
+        base_seed=BASE_SEED,
+        batch_size=BATCH_SIZE,
+        clear_samples=CLEAR_SAMPLES,
     )
+    print(f"Saved raw samples to {samples_dir}")
+
 
 if __name__ == "__main__":
     main()

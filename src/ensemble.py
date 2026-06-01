@@ -109,7 +109,7 @@ def generate_raw_samples(model, loader, output_dir, num_samples, base_seed, chun
                 save_paths[batch_index],
             )
 
-def evaluate_samples_dir(samples_dir, consensus_sizes, trials, seed=42):
+def evaluate_samples_dir(samples_dir, consensus_sizes, trials, seed=42, get_best_and_worst=False):
     random.seed(seed)
     samples_path = Path(samples_dir)
     sample_paths = sorted(
@@ -140,12 +140,14 @@ def evaluate_samples_dir(samples_dir, consensus_sizes, trials, seed=42):
             scores = ensemble.consensus_f1_trials(chosen_indices[size])
             row[f"cons_k{size}_mean"] = np.mean(scores)
             row[f"cons_k{size}_std"] = np.std(scores)
-        rows.append(row)
-
+            if get_best_and_worst:
+                row[f"cons_k{size}_best"] = np.max(scores)
+                row[f"cons_k{size}_worst"] = np.min(scores)
+        rows.append(row) 
     return pd.DataFrame(rows)
 
 
-def evaluate_samples_stats(samples_csv, consensus_sizes):
+def evaluate_samples_stats(samples_csv, consensus_sizes, get_best_and_worst=False):
     df = Path(samples_csv)
     if not df.exists():
         raise ValueError(f"CSV file {samples_csv} does not exist.")
@@ -157,19 +159,31 @@ def evaluate_samples_stats(samples_csv, consensus_sizes):
         "std": [],
         "std_mean": [],
         "std_std": [],
-    }
+    }  
+    if get_best_and_worst:
+        metrics["best"] = []
+        metrics["worst"] = []
+
     for size in consensus_sizes:
         mean_col = f"cons_k{size}_mean"
-        std_col = f"cons_k{size}_std"
+        std_col  = f"cons_k{size}_std"
         mean = df[mean_col].mean()
         std = df[mean_col].std()
         std_mean = df[std_col].mean()
         std_std = df[std_col].std()
-        
         metrics["consensus"].append(size)
         metrics["mean"].append(mean)
         metrics["std"].append(std)
         metrics["std_mean"].append(std_mean)
         metrics["std_std"].append(std_std)
+        if get_best_and_worst: 
+            best_col = f"cons_k{size}_best"
+            worst_col = f"cons_k{size}_worst"
+            best  = df[best_col].max()
+            worst = df[worst_col].min()
+            metrics["best"].append(best)
+            metrics["worst"].append(worst)        
 
+    if get_best_and_worst:
+        return pd.DataFrame(metrics, columns=["consensus", "mean", "std", "std_mean", "std_std", "best", "worst"])
     return pd.DataFrame(metrics, columns=["consensus", "mean", "std", "std_mean", "std_std"])

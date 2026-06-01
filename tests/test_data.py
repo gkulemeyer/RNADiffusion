@@ -171,7 +171,6 @@ def test_build_dataloader_and_datamodule_contract_are_consistent(tmp_path: Path)
         },
         "logging": {
             "save_dir": "logs/test",
-            "tensorboard": False,
             "log_every_n_steps": 1,
         },
     }

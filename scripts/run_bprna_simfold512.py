@@ -17,26 +17,21 @@ from src.run_loop import run_training_and_evaluation
 # ------------------------------------------------------------
 # setup
 # ------------------------------------------------------------
-EXPERIMENT_NAME = f"ArchiveII_simfold_refactor"
+EXPERIMENT_NAME = f"bprna_simfold_512"
 
-BASE_CONFIG_PATH = "configs/train/default.yaml"
-BASE_PATH ="data/ArchiveII.csv"
-# ENSEMBLE_CONFIG_PATH = "configs/ensemble/default512.yaml"
-
-PARTITIONS = ["sim50"] #, "sim90"
-# PARTITIONS = ["sim80"]
-# TIMESTEPS = [10, 25, 50, 100, 250, 500, 1000]
-TIMESTEPS = [5]
+BASE_CONFIG_PATH = "configs/train/default.yaml" 
+PARTITIONS = ["sim40", "sim50", "sim60", "sim80"]
+# PARTITIONS = ["sim40", "sim50", "sim60", "sim70", "sim80", "sim90"]
+TIMESTEPS = [100]
 LOSS_TYPE = ["vb_stochastic"] 
 
 BATCH_SIZE = 1
 ACCUMULATE_GRAD_BATCHES = 4
 
-VAL_EVERY_N_EPOCHS = 1
-VAL_EVERY_N_EPOCHS = 1
-CHECKPOINT_EVERY_N_EPOCHS = 1
+VAL_EVERY_N_EPOCHS = 5
+CHECKPOINT_EVERY_N_EPOCHS = 5
 
-EPOCHS = 2
+EPOCHS = 150
 RESUME = True
 
 # ------------------------------------------------------------
@@ -56,8 +51,10 @@ def build_run_config(base_config, experiment_name, partition, timestep, epochs, 
     seed = int(config.experiment.seed) 
 
     config.experiment.note = note
-    config.data.base_path = str(REPO_ROOT / BASE_PATH)
-    config.data.partition_path = str(REPO_ROOT / f"data/simfolds/6_sim_folds/archiveII_similars_splits_less_than_512_k10_NOboostrap_{partition}-fold.csv")
+    config.data.base_path = str(REPO_ROOT / "data" / "bpRNA" / "bpRNA.csv")
+    config.data.partition_path = str(
+        REPO_ROOT / f"data/bpRNA/NOboostrap/bpRNA_similars_splits_less_than_512_k10_NOboostrap_{partition}-fold.csv"
+        )
     config.model.timesteps = timestep
     config.model.loss_type = loss_type
     config.training.max_epochs = epochs

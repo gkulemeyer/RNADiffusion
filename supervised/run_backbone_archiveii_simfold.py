@@ -9,19 +9,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.config import load_config
-from src.sweeps import (
+from src.config import (
     clone_config,
     latest_run_dir,
+    load_config,
     to_config_dict,
 )
+from src.run_io import RunIO
 
 from supervised.backbone_experiment import (
-    completed_backbone_epochs,
     evaluate_backbone_checkpoint,
-    last_backbone_checkpoint,
-    milestone_complete,
-    snapshot_milestone,
+    periodic_eval_complete,
+    write_periodic_eval_result,
     run_backbone_experiment,
 )
 
@@ -35,10 +34,9 @@ BASE_DIM = [16, 32, 48, 64]
 BATCH_SIZE = 1
 ACCUMULATE_GRAD_BATCHES = 4
 LR = 0.001
-TENSORBOARD = True
 
 PARTITIONS = ["sim60", "sim70", "sim80", "sim90"]
-EPOCH_MILESTONES = list(range(5, 101, 5))
+PERIODIC_EVAL_EPOCH_COUNTS = list(range(5, 101, 5))
 
 EXPERIMENT_NAME = "ArchiveII_backbone"
 RUN_NAME_TEMPLATE = "timestamp_{dt}"
@@ -72,7 +70,6 @@ def build_run_config(base_config, experiment_name, repo_root, partition, base_di
     config.training.batch_size = BATCH_SIZE
     config.training.accumulate_grad_batches = ACCUMULATE_GRAD_BATCHES
     config.training.lr = LR
-    config.logging.tensorboard = TENSORBOARD
     config.logging.save_dir = str(
         repo_root / "supervised" / "logs" / experiment_name / partition / f"base_dim{base_dim}"
     )
@@ -80,16 +77,18 @@ def build_run_config(base_config, experiment_name, repo_root, partition, base_di
     return config, run_name, run_pattern
 
 
-def normalize_milestones(values):
-    milestones = sorted({int(value) for value in values if int(value) > 0})
-    if not milestones:
-        raise ValueError("EPOCH_MILESTONES must contain at least one positive epoch")
-    return milestones
+def normalize_periodic_eval_epoch_counts(values):
+    epoch_counts = sorted({int(value) for value in values if int(value) > 0})
+    if not epoch_counts:
+        raise ValueError("PERIODIC_EVAL_EPOCH_COUNTS must contain at least one positive epoch count")
+    return epoch_counts
 
 
 def resolve_run_dir(config, run_pattern):
     existing_dir = latest_run_dir(config, run_pattern=run_pattern)
     if existing_dir is None:
+        return None
+    if not RunIO(existing_dir).train_dir.exists():
         return None
 
     config.experiment.name = existing_dir.name
@@ -102,7 +101,7 @@ def resolve_run_dir(config, run_pattern):
 def main():
     repo_root = REPO_ROOT
     base_config = to_config_dict(load_config(repo_root / BASE_CONFIG_PATH))
-    milestones = normalize_milestones(EPOCH_MILESTONES)
+    periodic_eval_epoch_counts = normalize_periodic_eval_epoch_counts(PERIODIC_EVAL_EPOCH_COUNTS)
 
     jobs = [(partition, base_dim) for partition in PARTITIONS for base_dim in BASE_DIM]
 
@@ -124,51 +123,53 @@ def main():
         if not partition_path.exists():
             raise FileNotFoundError(f"Partition file not found: {partition_path}")
 
-        run_dir = resolve_run_dir(config, run_pattern)
-        resume_ckpt = last_backbone_checkpoint(run_dir) if run_dir is not None else None
-        current_epoch = completed_backbone_epochs(run_dir) if run_dir is not None else 0
+        run_root = resolve_run_dir(config, run_pattern)
+        run = RunIO(run_root) if run_root is not None else None
+        resume_ckpt = run.last_checkpoint() if run is not None else None
+        current_epoch_count = run.completed_epoch_count() if run is not None else 0
 
-        if run_dir is not None:
-            print(f"[RESUME] {run_dir} from epoch {current_epoch}")
+        if run_root is not None:
+            print(f"[RESUME] {run_root} from {current_epoch_count} completed epochs")
 
-        for milestone in milestones:
-            if milestone_complete(run_dir, milestone) if run_dir is not None else False:
-                print(f"[SKIP] epoch_{milestone:03d} already snapshotted")
+        for target_epoch_count in periodic_eval_epoch_counts:
+            if periodic_eval_complete(run_root, target_epoch_count) if run_root is not None else False:
+                print(f"[SKIP] epoch_{target_epoch_count - 1:03d} already evaluated")
                 continue
 
-            if current_epoch > milestone:
+            if current_epoch_count > target_epoch_count:
                 print(
-                    f"[WARN] current epoch {current_epoch} is past milestone {milestone}; "
+                    f"[WARN] current epoch count {current_epoch_count} is past target {target_epoch_count}; "
                     "cannot recreate exact checkpoint"
                 )
                 continue
 
-            if current_epoch < milestone:
-                config.training.max_epochs = milestone
+            if current_epoch_count < target_epoch_count:
+                config.training.max_epochs = target_epoch_count
                 result = run_backbone_experiment(
                     config.to_dict(),
-                    experiment_dir=run_dir,
+                    run_root=run_root,
                     resume=str(resume_ckpt) if resume_ckpt is not None else None,
                 )
-                run_dir = Path(result["experiment_dir"])
+                run_root = Path(result["experiment_dir"])
+                run = RunIO(run_root)
                 resume_ckpt = Path(result["last_checkpoint"])
-                current_epoch = completed_backbone_epochs(run_dir)
-                print(f"[TRAIN] reached epoch {current_epoch} in {run_dir}")
+                current_epoch_count = run.completed_epoch_count()
+                print(f"[TRAIN] reached {current_epoch_count} completed epochs in {run_root}")
 
             if resume_ckpt is None:
-                raise FileNotFoundError("Expected last checkpoint after training milestone")
+                raise FileNotFoundError("Expected last checkpoint after periodic training target")
 
             summary = evaluate_backbone_checkpoint(
-                load_config(run_dir / "config.yaml"),
+                load_config(run.train_dir / "config.yaml"),
                 resume_ckpt,
-                run_dir=run_dir,
-                epoch=milestone,
+                run_dir=run_root,
+                periodic_epoch_count=target_epoch_count,
             )
-            snapshot_dir = snapshot_milestone(run_dir, milestone, resume_ckpt, summary)
-            print(f"[TEST] wrote {snapshot_dir / 'test_summary.csv'}")
+            eval_dir = write_periodic_eval_result(run_root, resume_ckpt, summary)
+            print(f"[TEST] wrote {eval_dir / 'test_summary.csv'}")
 
-        if run_dir is not None:
-            print(f"[DONE] {run_dir}")
+        if run_root is not None:
+            print(f"[DONE] {run_root}")
 
 
 if __name__ == "__main__":

@@ -1,13 +1,12 @@
 from pathlib import Path
 import os
 
-import torch
 from ml_collections import ConfigDict
 
-from src.sweeps import (
-    completed_epochs,
-    last_checkpoint_path,
+from src.config import (
+    clone_config,
     latest_run_dir,
+    to_config_dict,
 )
 
 
@@ -31,12 +30,12 @@ def test_latest_run_dir_uses_latest_matching_run(tmp_path: Path):
     assert latest_run_dir(config) == newer_run_dir
 
 
-def test_completed_epochs_reads_last_checkpoint(tmp_path: Path):
-    run_dir = tmp_path / "run"
-    checkpoint_dir = run_dir / "checkpoints"
-    checkpoint_dir.mkdir(parents=True)
-    checkpoint_path = checkpoint_dir / "last.ckpt"
-    torch.save({"epoch": 1}, checkpoint_path)
+def test_clone_config_returns_independent_configdict():
+    config = {"experiment": {"name": "original"}}
 
-    assert last_checkpoint_path(run_dir) == checkpoint_path
-    assert completed_epochs(run_dir) == 2
+    cloned = clone_config(config)
+    cloned.experiment.name = "changed"
+
+    assert isinstance(to_config_dict(config), ConfigDict)
+    assert config["experiment"]["name"] == "original"
+    assert cloned.experiment.name == "changed"

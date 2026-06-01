@@ -30,6 +30,5 @@ training:
 
 logging:
   save_dir: "logs/RNADiffusion"
-  tensorboard: true
   log_every_n_steps: 1
   checkpoint_every_n_epochs: 1

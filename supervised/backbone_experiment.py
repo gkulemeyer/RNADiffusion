@@ -15,9 +15,9 @@ from tqdm import tqdm
 
 from src.config import build_experiment_dir, prepare_experiment_config, save_config
 from src.data import RNADataModule, build_dataloader
-from src.experiment import handle_metrics
-from src.io import build_loggers, configure_logger
+from src.io import build_loggers, configure_logger, handle_metrics
 from src.metrics import contact_f1
+from src.run_io import RunIO
 from supervised.supervised_simpleunet import BackboneSimpleUNet
 
 def build_backbone_model(config):
@@ -84,64 +84,41 @@ class BackboneSupervisedModule(L.LightningModule):
         return tr.optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
 
-def last_backbone_checkpoint(run_dir):
-    checkpoint_path = Path(run_dir) / "checkpoints" / "last.ckpt"
-    if checkpoint_path.exists():
-        return checkpoint_path
-    return None
-
-
-def best_backbone_checkpoint(run_dir):
-    checkpoint_path = Path(run_dir) / "checkpoints" / "best.ckpt"
-    if checkpoint_path.exists():
-        return checkpoint_path
-    return None
-
-
-def completed_backbone_epochs(run_dir):
-    checkpoint_path = last_backbone_checkpoint(run_dir)
-    if checkpoint_path is None:
-        return 0
-
-    checkpoint = tr.load(checkpoint_path, map_location="cpu")
-    epoch = checkpoint.get("epoch")
-    if epoch is None:
-        return 0
-    return int(epoch) + 1
-
-
-def prepare_backbone_run(config, experiment_dir=None):
+def prepare_backbone_run(config, run_root=None):
     config = prepare_experiment_config(config)
 
-    if experiment_dir is None:
-        experiment_dir = build_experiment_dir(config)
+    if run_root is None:
+        run_root = build_experiment_dir(config)
     else:
-        experiment_dir = Path(experiment_dir)
+        run_root = Path(run_root)
 
-    config = prepare_experiment_config(config, experiment_dir)
-    experiment_dir.mkdir(parents=True, exist_ok=True)
-    save_config(config, experiment_dir)
+    run = RunIO(run_root)
+    config = prepare_experiment_config(config, run.train_dir)
+    run.train_dir.mkdir(parents=True, exist_ok=True)
+    save_config(config, run.train_dir)
+
 
     run_logger = configure_logger(
         config["logging"]["train_log_path"],
         logger_name="backbone_supervised",
     )
     seed_everything(config["experiment"]["seed"], workers=True)
-    run_logger.info("Starting supervised backbone run in %s", experiment_dir)
+    run_logger.info("Starting supervised backbone run in %s", run.train_dir)
     run_logger.info("Resolved config: %s", json.dumps(config, indent=2))
-    return config, experiment_dir, run_logger
+    return config, run.root, run_logger
 
 
-def train_backbone(config, experiment_dir, logger, resume=None):
+def train_backbone(config, run_root, logger, resume=None):
     log_cfg = config["logging"]
     train_cfg = config["training"]
 
+    run = RunIO(run_root)
     data = RNADataModule(config)
     model = BackboneSupervisedModule(config)
-    loggers = build_loggers(config, experiment_dir)
+    loggers = build_loggers(config, run.train_dir)
 
     ckpt_cb = ModelCheckpoint(
-        dirpath=experiment_dir / "checkpoints",
+        dirpath=run.checkpoint_dir,
         filename="best",
         monitor="val_f1",
         mode="max",
@@ -166,8 +143,8 @@ def train_backbone(config, experiment_dir, logger, resume=None):
     trainer.fit(model, datamodule=data, ckpt_path=resume)
     handle_metrics(loggers, config, resume=resume is not None)
 
-    best_ckpt = ckpt_cb.best_model_path or str(best_backbone_checkpoint(experiment_dir) or "")
-    last_ckpt = ckpt_cb.last_model_path or str(last_backbone_checkpoint(experiment_dir) or "")
+    best_ckpt = ckpt_cb.best_model_path or str(run.best_ckpt_path if run.best_ckpt_path.exists() else "")
+    last_ckpt = ckpt_cb.last_model_path or str(run.last_checkpoint() or "")
 
     if not last_ckpt:
         raise RuntimeError("No checkpoint produced")
@@ -179,11 +156,13 @@ def train_backbone(config, experiment_dir, logger, resume=None):
     }
 
 
-def run_backbone_experiment(config, experiment_dir=None, resume=None):
-    config, exp_dir, logger = prepare_backbone_run(config, experiment_dir)
-    checkpoints = train_backbone(config, exp_dir, logger, resume)
+def run_backbone_experiment(config, run_root=None, resume=None):
+    config, root, logger = prepare_backbone_run(config, run_root)
+    checkpoints = train_backbone(config, root, logger, resume)
+    run = RunIO(root)
     return {
-        "experiment_dir": str(exp_dir),
+        "experiment_dir": str(run.root),
+        "train_dir": str(run.train_dir),
         "checkpoint": checkpoints["last_checkpoint"],
         "last_checkpoint": checkpoints["last_checkpoint"],
         "best_checkpoint": checkpoints["best_checkpoint"],
@@ -258,9 +237,12 @@ def evaluate_backbone_checkpoint(
     batch_size=0,
     output_path=None,
     run_dir=None,
-    epoch=None,
+    periodic_epoch_count=None,
 ):
     checkpoint_path = Path(checkpoint_path)
+    if run_dir is None and checkpoint_path.parent.name == "checkpoints":
+        run_dir = RunIO.from_train_dir(checkpoint_path.parent.parent).root
+
     loader = build_test_loader(config, batch_size=batch_size)
     model = load_backbone_checkpoint(config, checkpoint_path, eval_mode=True)
     device = tr.device("cuda" if tr.cuda.is_available() else "cpu")
@@ -269,34 +251,33 @@ def evaluate_backbone_checkpoint(
     summary = {
         "run_dir": str(run_dir or checkpoint_path.parent.parent),
         "checkpoint": str(checkpoint_path),
+        "checkpoint_epoch": RunIO.checkpoint_epoch(checkpoint_path),
+        "trained_epoch_count": RunIO.checkpoint_epoch(checkpoint_path) + 1,
         "epochs": config["training"]["max_epochs"],
         "base_dim": config["model"]["base_dim"],
         "test_loss": float(tr.tensor(results["loss"]).mean().item()),
         "test_f1": float(tr.tensor(results["f1"]).mean().item()),
         "test_f1_std": float(tr.tensor(results["f1"]).std(unbiased=False).item()),
     }
-    if epoch is not None:
-        summary["milestone_epoch"] = int(epoch)
+    if periodic_epoch_count is not None:
+        summary["periodic_epoch_count"] = int(periodic_epoch_count)
 
     if output_path is not None:
         write_summary_csv(summary, output_path)
     return summary
 
 
-def milestone_dir(run_dir, epoch):
-    return Path(run_dir) / f"epoch_{int(epoch):03d}"
-
-
-def milestone_complete(run_dir, epoch):
-    target_dir = milestone_dir(run_dir, epoch)
+def periodic_eval_complete(run_root, trained_epoch_count):
+    epoch = int(trained_epoch_count) - 1
+    target_dir = RunIO(run_root).periodic_eval_dir(epoch)
     return (target_dir / "last.ckpt").exists() and (target_dir / "test_summary.csv").exists()
 
 
-def snapshot_milestone(run_dir, epoch, checkpoint_path, summary):
-    target_dir = milestone_dir(run_dir, epoch)
+def write_periodic_eval_result(run_root, checkpoint_path, summary):
+    epoch = RunIO.checkpoint_epoch(checkpoint_path)
+    target_dir = RunIO(run_root).periodic_eval_dir(epoch)
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    checkpoint_path = Path(checkpoint_path)
-    shutil.copy2(checkpoint_path, target_dir / "last.ckpt")
+    shutil.copy2(Path(checkpoint_path), target_dir / "last.ckpt")
     write_summary_csv(summary, target_dir / "test_summary.csv")
     return target_dir

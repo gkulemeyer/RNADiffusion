@@ -1,5 +1,6 @@
 import lightning as L
 import torch as tr
+from lightning.pytorch.callbacks import Callback
 
 from src.metrics import contact_f1
 from src.model import build_model
@@ -50,3 +51,27 @@ class RNADiffusionModule(L.LightningModule):
 
     def configure_optimizers(self):
         return tr.optim.Adam(self.model.parameters(), lr=self.learning_rate)
+
+
+class TestMetricsCollector(Callback):
+    def __init__(self):
+        self.losses = []
+        self.f1_scores = []
+
+    def on_test_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
+        if not outputs:
+            return
+        self.losses.append(float(outputs["test_loss"].detach().cpu()))
+        self.f1_scores.append(float(outputs["test_f1"].detach().cpu()))
+
+
+def load_rna_module_checkpoint(config, checkpoint_path, eval_mode=True):
+    checkpoint = tr.load(checkpoint_path, map_location="cpu")
+    if "state_dict" not in checkpoint:
+        raise ValueError(f"Expected a Lightning .ckpt file, got: {checkpoint_path}")
+
+    module = RNADiffusionModule(config)
+    module.load_state_dict(checkpoint["state_dict"])
+    if eval_mode:
+        module.eval()
+    return module

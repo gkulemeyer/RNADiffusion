@@ -30,8 +30,8 @@ def test_load_yaml_config(tmp_path: Path):
 
     config = load_config(str(config_path))
     assert config["experiment"]["name"] == "test"
-    assert config["training"]["batch_size"] == 4
-    assert config["ensemble"]["num_samples"] == 50
+    assert config["training"]["batch_size"] == 1
+    assert config["ensemble"]["num_samples"] == 16
 
 
 def test_prepare_experiment_config_adds_metadata(tmp_path: Path):
@@ -93,7 +93,7 @@ def test_load_config_missing_path_raises(tmp_path: Path):
 
 def test_load_train_defaults_from_configs():
     defaults = load_train_defaults()
-    assert defaults["training"]["batch_size"] == 4
+    assert defaults["training"]["batch_size"] == 1
     assert defaults["training"]["check_val_every_n_epoch"] == 1
     assert defaults["model"]["timesteps"] == 5
     assert defaults["logging"]["checkpoint_every_n_epochs"] == 1
@@ -102,5 +102,5 @@ def test_load_train_defaults_from_configs():
 
 def test_load_ensemble_defaults_from_configs():
     defaults = load_ensemble_defaults()
-    assert defaults["num_samples"] == 50
-    assert defaults["consensus_sizes"] == [1, 3, 5, 7, 9, 11, 13, 15, 19, 21, 25]
+    assert defaults["num_samples"] == 16
+    assert defaults["consensus_sizes"] == [1, 3, 5, 7]
