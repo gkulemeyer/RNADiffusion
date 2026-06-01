@@ -267,15 +267,17 @@ def evaluate_backbone_checkpoint(
     return summary
 
 
-def periodic_eval_complete(run_root, trained_epoch_count):
-    epoch = int(trained_epoch_count) - 1
-    target_dir = RunIO(run_root).periodic_eval_dir(epoch)
+def milestone_dir(run_dir, epoch):
+    return Path(run_dir) / f"epoch_{int(epoch):03d}"
+
+
+def milestone_complete(run_dir, epoch):
+    target_dir = milestone_dir(run_dir, epoch)
     return (target_dir / "last.ckpt").exists() and (target_dir / "test_summary.csv").exists()
 
 
-def write_periodic_eval_result(run_root, checkpoint_path, summary):
-    epoch = RunIO.checkpoint_epoch(checkpoint_path)
-    target_dir = RunIO(run_root).periodic_eval_dir(epoch)
+def snapshot_milestone(run_dir, epoch, checkpoint_path, summary):
+    target_dir = milestone_dir(run_dir, epoch)
     target_dir.mkdir(parents=True, exist_ok=True)
 
     shutil.copy2(Path(checkpoint_path), target_dir / "last.ckpt")
