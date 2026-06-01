@@ -7,3 +7,4 @@ consensus_sizes:
   - 5
   - 7
 chunk_size: 8
+get_best_and_worst: true

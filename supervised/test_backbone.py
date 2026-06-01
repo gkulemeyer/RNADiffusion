@@ -10,6 +10,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.config import load_config
+from src.run_io import RunIO
 from supervised.backbone_experiment import (
     evaluate_backbone_checkpoint,
 )
@@ -17,7 +18,7 @@ from supervised.backbone_experiment import (
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate one supervised backbone checkpoint.")
-    parser.add_argument("--run-dir", default="", help="Run directory or milestone directory")
+    parser.add_argument("--run-dir", default="", help="Run root directory")
     parser.add_argument("--config", default="", help="Path to config.yaml")
     parser.add_argument("--checkpoint", default="", help="Path to .ckpt file")
     parser.add_argument("--output", default="", help="Optional CSV path for the summary row")
@@ -33,21 +34,21 @@ def parse_args():
 
 def resolve_paths(args):
     if args.run_dir:
-        run_dir = Path(args.run_dir)
-        if (run_dir / "config.yaml").exists():
-            config_path = run_dir / "config.yaml"
-            checkpoint_path = run_dir / "checkpoints" / "last.ckpt"
-        else:
-            config_path = run_dir.parent / "config.yaml"
-            checkpoint_path = run_dir / "last.ckpt"
-        output_path = Path(args.output) if args.output else run_dir / "test_summary.csv"
-        return run_dir, config_path, checkpoint_path, output_path
+        run = RunIO(args.run_dir)
+        config_path = run.config_path
+        checkpoint_path = run.last_ckpt_path
+        output_path = Path(args.output) if args.output else run.best_eval_dir / "test_summary.csv"
+        return run.root, config_path, checkpoint_path, output_path
 
     config_path = Path(args.config)
-    checkpoint_path = Path(args.checkpoint) if args.checkpoint else config_path.parent / "checkpoints" / "last.ckpt"
-    run_dir = checkpoint_path.parent.parent if checkpoint_path.parent.name == "checkpoints" else config_path.parent
-    output_path = Path(args.output) if args.output else run_dir / "test_summary.csv"
-    return run_dir, config_path, checkpoint_path, output_path
+    if args.checkpoint:
+        checkpoint_path = Path(args.checkpoint)
+        run = RunIO.from_train_dir(config_path.parent)
+    else:
+        run = RunIO.from_train_dir(config_path.parent)
+        checkpoint_path = run.last_ckpt_path
+    output_path = Path(args.output) if args.output else run.best_eval_dir / "test_summary.csv"
+    return run.root, config_path, checkpoint_path, output_path
 
 
 def main():

@@ -1,23 +1,17 @@
-import argparse
+from pathlib import Path
 
 from src.config import load_config
-from src.experiment import run_experiment
+from src.run_loop import run_training_and_evaluation
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Train RNADiffusion with PyTorch Lightning.")
-    parser.add_argument(
-        "--config",
-        default="configs/train/default.yaml",
-        help="Path to a YAML config file.",
-    )
-    return parser.parse_args()
+CONFIG_PATH = Path("configs/train/default.yaml")
+JOB_DIR = Path("logs/manual_train")
+RESUME = True
 
 
 def main():
-    args = parse_args()
-    config = load_config(args.config)
-    run_experiment(config)
+    config = load_config(CONFIG_PATH)
+    run_training_and_evaluation(config, JOB_DIR, resume=RESUME)
 
 
 if __name__ == "__main__":

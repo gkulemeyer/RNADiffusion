@@ -8,13 +8,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.config import load_config
-from src.sweeps import clone_config, to_config_dict
+from src.config import clone_config, load_config, to_config_dict
+from src.run_io import RunIO
 
 from supervised.backbone_experiment import (
-    completed_backbone_epochs,
     evaluate_backbone_checkpoint,
-    last_backbone_checkpoint,
     run_backbone_experiment,
 )
 
@@ -29,7 +27,6 @@ BASE_DIM = [32]
 BATCH_SIZE = 1
 ACCUMULATE_GRAD_BATCHES = 4
 LR = 0.001
-TENSORBOARD = True
 
 VAL_EVERY_N_EPOCHS = 1
 CHECKPOINT_EVERY_N_EPOCHS = 1
@@ -79,13 +76,13 @@ def resolve_run_dir(job_dir, resume):
 
     if resume:
         latest_attempt = latest_attempt_dir(job_dir)
-        if latest_attempt is not None and (latest_attempt / "checkpoints").exists():
+        if latest_attempt is not None and RunIO(latest_attempt).train_dir.exists():
             return latest_attempt
         return job_dir
 
     if not job_dir.exists():
         return job_dir
-    if (job_dir / "checkpoints").exists() or latest_attempt_dir(job_dir) is not None:
+    if RunIO(job_dir).train_dir.exists() or latest_attempt_dir(job_dir) is not None:
         return next_attempt_dir(job_dir)
     return job_dir
 
@@ -115,7 +112,6 @@ def build_run_config(base_config, experiment_name, repo_root, fold, epochs, base
     config.training.batch_size = BATCH_SIZE
     config.training.accumulate_grad_batches = ACCUMULATE_GRAD_BATCHES
     config.training.lr = LR
-    config.logging.tensorboard = TENSORBOARD
     config.logging.checkpoint_every_n_epochs = CHECKPOINT_EVERY_N_EPOCHS
     config.logging.save_dir = str((repo_root / job_dir.parent).resolve())
 
@@ -153,31 +149,33 @@ def main():
 
         config.experiment.name = run_dir.name
 
-        resume_ckpt = last_backbone_checkpoint(run_dir) if run_dir.exists() else None
-        current_epoch = completed_backbone_epochs(run_dir) if run_dir.exists() else 0
+        run = RunIO(run_dir)
+        resume_ckpt = run.last_checkpoint() if run.train_dir.exists() else None
+        current_epoch_count = run.completed_epoch_count() if run.train_dir.exists() else 0
 
-        if run_dir.exists():
-            print(f"[RESUME] {run_dir} from epoch {current_epoch}")
+        if run.train_dir.exists():
+            print(f"[RESUME] {run_dir} from {current_epoch_count} completed epochs")
 
-        if current_epoch < EPOCHS:
+        if current_epoch_count < EPOCHS:
             result = run_backbone_experiment(
                 config.to_dict(),
-                experiment_dir=run_dir,
+                run_root=run_dir,
                 resume=str(resume_ckpt) if resume_ckpt is not None else None,
             )
             run_dir = Path(result["experiment_dir"])
+            run = RunIO(run_dir)
             resume_ckpt = Path(result["last_checkpoint"])
-            current_epoch = completed_backbone_epochs(run_dir)
-            print(f"[TRAIN] reached epoch {current_epoch} in {run_dir}")
+            current_epoch_count = run.completed_epoch_count()
+            print(f"[TRAIN] reached {current_epoch_count} completed epochs in {run_dir}")
         else:
-            print(f"[TRAIN] already complete at epoch {current_epoch}")
+            print(f"[TRAIN] already complete at {current_epoch_count} completed epochs")
 
         if resume_ckpt is None:
-            raise FileNotFoundError(f"Last checkpoint not found in {run_dir / 'checkpoints'}")
+            raise FileNotFoundError(f"Last checkpoint not found in {run.checkpoint_dir}")
 
-        summary_path = run_dir / "test_summary.csv"
+        summary_path = run.best_eval_dir / "test_summary.csv"
         evaluate_backbone_checkpoint(
-            load_config(run_dir / "config.yaml"),
+            load_config(run.train_dir / "config.yaml"),
             resume_ckpt,
             run_dir=run_dir,
             output_path=summary_path,

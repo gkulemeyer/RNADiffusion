@@ -14,6 +14,7 @@ def make_config():
         "model": {
             "timesteps": 2,
             "num_classes": 2,
+            "loss_type": "vb_all",
             "in_channels": 18,
             "out_channels": 2,
             "base_dim": 8,
@@ -30,7 +31,6 @@ def make_config():
         "logging": {
             "save_dir": "logs/test",
             "csv": True,
-            "tensorboard": False,
             "log_every_n_steps": 1,
         },
     }
@@ -47,13 +47,13 @@ def make_batch():
     }
 
 
-def test_build_model_forward_all_timesteps():
+def test_build_model_train_loss_and_sample():
     model = build_model(make_config())
     batch = make_batch()
-    loss = model.forward_all_timesteps(
+    loss = model._train_loss(
         batch["contact_oh"],
         batch["conditioning"],
-        mask=batch["mask"],
+        lengths=batch["length"],
     )
     assert loss.ndim == 0
     sample = model.sample(batch["conditioning"])

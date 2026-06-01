@@ -4,21 +4,17 @@ import copy
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
+from ml_collections import ConfigDict
 
-import yaml
+from src.io import read_yaml, write_yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TRAIN_DEFAULT_CONFIG_PATH = REPO_ROOT / "configs/train/default.yaml"
 ENSEMBLE_DEFAULT_CONFIG_PATH = REPO_ROOT / "configs/ensemble/default.yaml"
 
 
-def _read_yaml_file(path):
-    with Path(path).open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle) or {}
-
-
 def load_train_defaults():
-    defaults = _read_yaml_file(TRAIN_DEFAULT_CONFIG_PATH)
+    defaults = read_yaml(TRAIN_DEFAULT_CONFIG_PATH)
     defaults.setdefault("experiment", {})
     defaults["experiment"].setdefault("uuid", "")
     defaults["experiment"].setdefault("timestamp", "")
@@ -26,7 +22,7 @@ def load_train_defaults():
 
 
 def load_ensemble_defaults():
-    return _read_yaml_file(ENSEMBLE_DEFAULT_CONFIG_PATH)
+    return read_yaml(ENSEMBLE_DEFAULT_CONFIG_PATH)
 
 
 def load_base_defaults():
@@ -54,7 +50,7 @@ def load_config(path):
     if not config_path.is_file():
         raise FileNotFoundError(f"Config path not found: {path}")
 
-    raw_config = _read_yaml_file(config_path)
+    raw_config = read_yaml(config_path)
 
     return deep_merge(load_base_defaults(), raw_config)
 
@@ -62,8 +58,7 @@ def load_config(path):
 def save_config(config, output_dir):
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    with (output_path / "config.yaml").open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(config, handle, sort_keys=False)
+    write_yaml(config, output_path / "config.yaml")
 
 def prepare_experiment_config(config, experiment_dir=None):
     prepared = deep_merge(load_base_defaults(), config)
@@ -115,3 +110,30 @@ def build_experiment_dir(config):
         if not candidate.exists():
             return candidate
         suffix += 1
+
+
+def to_config_dict(config):
+    return ConfigDict(copy.deepcopy(config))
+
+
+def from_config_dict(config):
+    if hasattr(config, "to_dict"):
+        return config.to_dict()
+    return copy.deepcopy(config)
+
+
+def clone_config(config):
+    return to_config_dict(from_config_dict(config))
+
+
+def latest_run_dir(config, run_pattern=None):
+    config_dict = from_config_dict(config)
+    save_dir = Path(config_dict["logging"]["save_dir"])
+    run_name = build_experiment_name(config_dict)
+    pattern = run_pattern or f"{run_name}*"
+
+    matches = [path for path in save_dir.glob(pattern) if path.is_dir()]
+    if not matches:
+        return None
+    matches.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return matches[0]

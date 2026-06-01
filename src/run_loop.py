@@ -1,182 +1,81 @@
 from __future__ import annotations
 
-from pathlib import Path
-
-from ml_collections import ConfigDict
-import yaml
-
-from src.config import load_config, prepare_experiment_config
-from src.experiment import (
-    checkpoint_completed_epoch,
-    evaluate,
-    list_periodic_checkpoints,
-    prepare_run,
-    train,
-)
+from src.config import clone_config
+from src.experiment import evaluate_checkpoint, prepare_run, train
+from src.run_io import RunIO, RunResolver
 from src.io import configure_logger
-from src.sweeps import completed_epochs, last_checkpoint_path
 
 
-def _save_dir_structure(run_root, legacy=False):
-    run_root = Path(run_root)
-    return run_root / "train", run_root / "eval" / "best", run_root / "eval" / "periodic"
+def evaluate_periodic_checkpoints(run, logger):
+    run = run if isinstance(run, RunIO) else RunIO(run)
+    checkpoints = run.periodic_checkpoints()
 
-
-def _latest_attempt_dir(job_dir):
-    attempt_dirs = sorted(
-        path for path in Path(job_dir).glob("attempt_*") if path.is_dir()
-    )
-    if not attempt_dirs:
-        return None
-    return attempt_dirs[-1]
-
-
-def _next_attempt_dir(job_dir):
-    index = 1
-    while True:
-        attempt_dir = Path(job_dir) / f"attempt_{index:03d}"
-        if not attempt_dir.exists():
-            return attempt_dir
-        index += 1
-
-
-def _resolve_run_root(config, job_dir, resume):
-    job_dir = Path(job_dir)
-
-    if resume:
-        if (job_dir / "train").exists():
-            config.experiment.name = job_dir.name
-            return job_dir
-
-        latest_attempt = _latest_attempt_dir(job_dir)
-        if latest_attempt is not None and (latest_attempt / "train").exists():
-            config.experiment.name = latest_attempt.name
-            return latest_attempt
-
-        config.experiment.name = job_dir.name
-        return job_dir
-
-    if not job_dir.exists():
-        config.experiment.name = job_dir.name
-        return job_dir
-
-    if (job_dir / "train").exists() or _latest_attempt_dir(job_dir) is not None:
-        attempt_dir = _next_attempt_dir(job_dir)
-        config.experiment.name = attempt_dir.name
-        return attempt_dir
-
-    config.experiment.name = job_dir.name
-    return job_dir
-
-def _best_eval_matches_checkpoint(best_eval_dir, best_ckpt):
-    metadata_path = Path(best_eval_dir) / "ensemble_metadata.yaml"
-    if not metadata_path.exists():
-        return False
-
-    with metadata_path.open("r", encoding="utf-8") as handle:
-        metadata = yaml.safe_load(handle) or {}
-
-    if metadata.get("checkpoint_path") != str(best_ckpt):
-        return False
-
-    stored_epoch = metadata.get("checkpoint_epoch")
-    if stored_epoch is None:
-        return True
-    return int(stored_epoch) == checkpoint_completed_epoch(best_ckpt)
-
-
-def _evaluate_periodic_checkpoints(train_dir, periodic_eval_root, logger):
-    run_config = load_config(train_dir / "config.yaml")
-    checkpoint_paths = list_periodic_checkpoints(train_dir)
-
-    if not checkpoint_paths:
-        print(f"[WARN] no periodic checkpoints found in {train_dir / 'checkpoints' / 'periodic'}")
+    if not checkpoints:
+        print(f"[WARN] no periodic checkpoints found in {run.periodic_ckpt_dir}")
         return
 
-    for checkpoint_path in checkpoint_paths:
-        epoch = checkpoint_completed_epoch(checkpoint_path)
-        target_dir = Path(periodic_eval_root) / f"epoch_{epoch:03d}"
+    for checkpoint_path in checkpoints:
+        epoch = RunIO.checkpoint_epoch(checkpoint_path)
+        target_dir = run.periodic_eval_dir(epoch)
         if (target_dir / "ensemble_stats.csv").exists():
             print(f"[SKIP] epoch_{epoch:03d} already evaluated")
             continue
 
-        eval_config = prepare_experiment_config(run_config, target_dir)
-        evaluate(
-            eval_config,
-            target_dir,
-            checkpoint_path,
-            logger,
-            cleanup_raw_samples=True,
+        evaluate_checkpoint(
+            run.root,
+            checkpoint=checkpoint_path,
+            output_dir=target_dir,
+            keep_samples=False,
+            logger=logger,
         )
         print(f"[EVAL] wrote {target_dir}")
 
 
-def _evaluate_best_checkpoint(train_dir, best_eval_dir, logger):
-    best_ckpt = Path(train_dir) / "checkpoints" / "best.ckpt"
-    if not best_ckpt.exists():
-        print(f"[WARN] best checkpoint not found in {Path(train_dir) / 'checkpoints'}")
-        return
+def evaluate_run(run, logger=None, include_periodic=True):
+    run = run if isinstance(run, RunIO) else RunIO(run)
+    logger = logger or configure_logger(run.log_path)
 
-    if (Path(best_eval_dir) / "ensemble_stats.csv").exists() and _best_eval_matches_checkpoint(
-        best_eval_dir, best_ckpt
-    ):
-        print(f"[SKIP] best checkpoint already evaluated in {best_eval_dir}")
-        return
+    if include_periodic:
+        evaluate_periodic_checkpoints(run, logger)
 
-    eval_config = load_config(Path(train_dir) / "config.yaml")
-    eval_config = prepare_experiment_config(eval_config, best_eval_dir)
-    evaluate(eval_config, best_eval_dir, best_ckpt, logger, cleanup_raw_samples=False)
-    print(f"[EVAL] wrote best checkpoint outputs in {best_eval_dir}")
+    if not run.best_ckpt_path.exists():
+        print(f"[WARN] best checkpoint not found in {run.checkpoint_dir}")
+        return run.root
+
+    if run.best_eval_is_current():
+        print(f"[SKIP] best checkpoint already evaluated in {run.best_eval_dir}")
+        return run.root
+
+    evaluate_checkpoint(run.root, checkpoint="best", logger=logger)
+    print(f"[EVAL] wrote best checkpoint outputs in {run.best_eval_dir}")
+    return run.root
+
 
 def run_training_and_evaluation(config, job_dir, resume=True):
-    requested_epochs = int(config.training.max_epochs)
-    requested_val_every = int(config.training.check_val_every_n_epoch)
-    requested_ckpt_every = int(config.logging.checkpoint_every_n_epochs)
+    config = clone_config(config)
+    state = RunResolver(job_dir, resume=resume).build_state(config)
+    run = state.run
 
-    run_root = _resolve_run_root(config, job_dir, resume)
-    train_dir, best_eval_dir, periodic_eval_root = _save_dir_structure(run_root)
+    if run.run_is_complete(state.total_epochs):
+        print(f"[DONE] already complete: {run.root}")
+        return run.root
 
-    effective_config = config
-    config_path = train_dir / "config.yaml"
-    previous_epochs = requested_epochs
-
-    if config_path.exists():
-        effective_config = ConfigDict(load_config(config_path))
-        previous_epochs = int(effective_config.training.max_epochs)
-
-    effective_config.training.max_epochs = requested_epochs
-    effective_config.training.check_val_every_n_epoch = requested_val_every
-    effective_config.logging.checkpoint_every_n_epochs = requested_ckpt_every
-
-    resume_ckpt = last_checkpoint_path(train_dir) if train_dir.exists() else None
-    done_epochs = 0
-
-    if train_dir.exists():
-        completed = completed_epochs(train_dir)
-        if completed is not None:
-            done_epochs = min(int(completed), previous_epochs)
-        print(f"[RESUME] {train_dir} from epoch {done_epochs}")
-
-    if done_epochs < requested_epochs:
+    if state.should_train:
         prepared_config, train_dir, logger = prepare_run(
-            effective_config.to_dict(),
-            experiment_dir=train_dir,
+            state.config.to_dict(),
+            experiment_dir=run.train_dir,
         )
         train(
             prepared_config,
             train_dir,
             logger,
-            resume=str(resume_ckpt) if resume_ckpt else None,
+            resume=str(state.checkpoint_path) if state.checkpoint_path else None,
         )
-        completed = completed_epochs(train_dir)
-        done_epochs = 0 if completed is None else min(int(completed), requested_epochs)
-        print(f"[TRAIN] reached epoch {done_epochs} in {train_dir}")
     else:
-        logger = configure_logger(Path(train_dir) / "run.log")
-        print(f"[TRAIN] already complete at epoch {done_epochs}")
+        logger = configure_logger(run.log_path)
+        print(f"[TRAIN] already complete at epoch {state.done_epochs}")
 
-    _evaluate_periodic_checkpoints(train_dir, periodic_eval_root, logger)
-    _evaluate_best_checkpoint(train_dir, best_eval_dir, logger)
-    print(f"[DONE] {run_root}")
+    evaluate_run(run, logger=logger, include_periodic=True)
 
-    return run_root
+    print(f"[DONE] {run.root}")
+    return run.root 

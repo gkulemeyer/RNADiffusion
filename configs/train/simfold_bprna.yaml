@@ -1,0 +1,10 @@
+experiment:
+  name: ""
+  note: "bpRNA simfold training config"
+  seed: 42
+
+data:
+  base_path: "data/bpRNA/bpRNA.csv"
+  partition_path: "data/bpRNA/NOboostrap/bpRNA_similars_splits_less_than_512_k10_NOboostrap_{partition}-fold.csv"
+  partition_scheme: "simfold"
+  fold: 0

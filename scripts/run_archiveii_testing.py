@@ -17,7 +17,7 @@ from src.run_loop import run_training_and_evaluation
 # ------------------------------------------------------------
 # setup
 # ------------------------------------------------------------
-EXPERIMENT_NAME = f"ArchiveII_simfold_512_testing2"
+EXPERIMENT_NAME = f"ArchiveII_simfold_refactor"
 
 BASE_CONFIG_PATH = "configs/train/default.yaml"
 BASE_PATH ="data/ArchiveII.csv"
