@@ -110,6 +110,11 @@ def generate_raw_samples(model, loader, output_dir, num_samples, base_seed, chun
             )
 
 def evaluate_samples_dir(samples_dir, consensus_sizes, trials, seed=42, get_best_and_worst=False):
+    """
+    Evaluates samples in a directory for specified consensus sizes and trials.
+    Returns a DataFrame with mean and std of F1 scores for each consensus size, and optionally the best and worst scores.
+    This is sequence-level evaluation, so each row corresponds to one sequence and its associated samples.
+    """
     random.seed(seed)
     samples_path = Path(samples_dir)
     sample_paths = sorted(
@@ -148,6 +153,10 @@ def evaluate_samples_dir(samples_dir, consensus_sizes, trials, seed=42, get_best
 
 
 def evaluate_samples_stats(samples_csv, consensus_sizes, get_best_and_worst=False):
+    """
+    Evaluates the statistics of F1 scores (means and std) in a CSV file for specified consensus sizes.
+    Returns a DataFrame with mean and std of F1 scores for each consensus size, and optionally the best and worst scores.
+    """
     df = Path(samples_csv)
     if not df.exists():
         raise ValueError(f"CSV file {samples_csv} does not exist.")
@@ -179,8 +188,8 @@ def evaluate_samples_stats(samples_csv, consensus_sizes, get_best_and_worst=Fals
         if get_best_and_worst: 
             best_col = f"cons_k{size}_best"
             worst_col = f"cons_k{size}_worst"
-            best  = df[best_col].max()
-            worst = df[worst_col].min()
+            best  = df[best_col].mean()
+            worst = df[worst_col].mean()
             metrics["best"].append(best)
             metrics["worst"].append(worst)        
 
