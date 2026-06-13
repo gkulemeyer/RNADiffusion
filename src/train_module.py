@@ -12,7 +12,15 @@ class RNADiffusionModule(L.LightningModule):
         self.config = config
         self.model = build_model(config)
         self.learning_rate = config["training"]["lr"]
-        self.save_hyperparameters(config)
+        self.save_hyperparameters(config) 
+        
+        if config["model"]["load_pretrained"]:
+            pretrained_path = config["model"]["pretrained_path"]
+            print(f"[INFO] loading pretrained model from {pretrained_path}")
+            checkpoint = tr.load(pretrained_path, map_location="cpu")
+            if "state_dict" not in checkpoint:
+                raise ValueError(f"Expected a Lightning .ckpt file, got: {pretrained_path}")
+            self.model.load_state_dict(checkpoint["state_dict"], strict=False)
 
     def _compute_loss(self, batch):
         return self.model._train_loss(

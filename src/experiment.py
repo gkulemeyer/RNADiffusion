@@ -333,6 +333,7 @@ def evaluate_checkpoint(
     output_dir=None,
     keep_samples=False,
     logger=None,
+    batch_size1=False,
 ):
     target = Path(target)
     if target.suffix == ".ckpt":
@@ -352,6 +353,9 @@ def evaluate_checkpoint(
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     config = prepare_experiment_config(load_config(run.config_path), output_dir)
+    if batch_size1:
+        print("[EVAL] setting batch size to 1 for evaluation")
+        config["training"]["batch_size"] = 1 
     logger = logger or configure_logger(output_dir / "eval.log")
 
     evaluate_checkpoint_ensemble(
