@@ -10,4 +10,7 @@ data:
   fold: 0
 
 model:
-  load_pretrained: false
+  evaluate: true
+  load_pretrained: true
+  pretrained_path: "path/to/pretrained/model.ckptS"
+  timesteps: 5

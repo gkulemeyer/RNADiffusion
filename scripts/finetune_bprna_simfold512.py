@@ -5,8 +5,6 @@ from itertools import product
 from pathlib import Path
 import sys
 
-import torch as tr
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -14,21 +12,26 @@ if str(REPO_ROOT) not in sys.path:
 from src.config import clone_config, load_config
 from src.run_loop import run_training_and_evaluation
 
-CONFIG_PATH = REPO_ROOT / "configs/train/simfold_bprna_pretrained.yaml"
 
-# Edit these values for each run.
-EXPERIMENT_NAME = "bpRNA_simfold_testing_pretrain"
+CONFIG_PATH = REPO_ROOT / "configs/train/simfold_bprna_finetune.yaml"
+
+EXPERIMENT_NAME = "pretrained_bpRNA_simfold_test"
 PARTITIONS = ["sim40"]
 TIMESTEPS = [5]
-LOSS_TYPES = ["vb_stochastic"]
 
-EPOCHS = 150
-BATCH_SIZE = 1
-ACCUMULATE_GRAD_BATCHES = 4
+PRETRAIN_CHECKPOINTS = {
+    "best": REPO_ROOT / "logs/pretrained_bpRNA_simfold_test/sim40/t5/train/checkpoints/best.ckpt",
+    "last": REPO_ROOT / "logs/pretrained_bpRNA_simfold_test/sim40/t5/train/checkpoints/last.ckpt",
+}
+
+EPOCHS = 1
+BATCH_SIZE = 16
+ACCUMULATE_GRAD_BATCHES = 1
 VAL_EVERY_N_EPOCHS = 1
 CHECKPOINT_EVERY_N_EPOCHS = 1
 
-RESUME = False
+RESUME = True
+EVALUATE = True
 CONTINUE_ON_OOM = True
 
 
@@ -37,19 +40,33 @@ def repo_path(path):
     return path if path.is_absolute() else REPO_ROOT / path
 
 
-def make_run(base_config, partition, timestep, loss_type):
-    job_dir = Path("logs") / EXPERIMENT_NAME / partition / f"t{timestep}" / loss_type
+def make_run(base_config, partition, timestep, ckpt_label, pretrained_path):
+    job_dir = (
+        Path("logs")
+        / EXPERIMENT_NAME
+        / partition
+        / f"t{timestep}"
+        / "finetune"
+        / f"pretrain_{ckpt_label}"
+    )
     config = clone_config(base_config)
     partition_path = str(config.data.partition_path).format(partition=partition)
 
     config.experiment.note = (
-        f"{EXPERIMENT_NAME} | {partition}, t={timestep}, loss={loss_type}, "
+        f"{EXPERIMENT_NAME} | {partition}, t={timestep}, pretrain={ckpt_label}, "
         f"e={EPOCHS}, val={VAL_EVERY_N_EPOCHS}, ckpt={CHECKPOINT_EVERY_N_EPOCHS}"
     )
+    # Update data paths and training parameters based on input arguments
     config.data.base_path = str(repo_path(config.data.base_path))
     config.data.partition_path = str(repo_path(partition_path))
+
+    # update model and training config based on input arguments
+    config.model.evaluate = EVALUATE
     config.model.timesteps = timestep
-    config.model.loss_type = loss_type
+    config.model.load_pretrained = True
+    config.model.pretrained_path = str(pretrained_path)
+    config.model.loss_type = "vb_stochastic"
+
     config.training.max_epochs = EPOCHS
     config.training.batch_size = BATCH_SIZE
     config.training.accumulate_grad_batches = ACCUMULATE_GRAD_BATCHES
@@ -64,6 +81,7 @@ def validate_data_files(config):
     paths = [
         ("Base data file", config.data.base_path),
         ("Partition file", config.data.partition_path),
+        ("Pretrained checkpoint", config.model.pretrained_path),
     ]
     for label, path in paths:
         path = Path(path)
@@ -73,26 +91,30 @@ def validate_data_files(config):
 
 def main():
     base_config = load_config(CONFIG_PATH)
-    jobs = list(product(PARTITIONS, TIMESTEPS, LOSS_TYPES))
+    jobs = list(product(PARTITIONS, TIMESTEPS, PRETRAIN_CHECKPOINTS.items()))
 
-    for index, (partition, timestep, loss_type) in enumerate(jobs, start=1):
-        config, job_dir = make_run(base_config, partition, timestep, loss_type)
+    for index, (partition, timestep, (ckpt_label, pretrained_path)) in enumerate(
+        jobs,
+        start=1,
+    ):
+        config, job_dir = make_run(
+            base_config,
+            partition,
+            timestep,
+            ckpt_label,
+            pretrained_path,
+        )
 
         print(f"\n[{index}/{len(jobs)}] {job_dir}")
         validate_data_files(config)
 
         print(config)
-        try:
-            run_training_and_evaluation(
-                config,
-                REPO_ROOT / job_dir,
-                resume=RESUME,
-            )
-        except tr.cuda.OutOfMemoryError:
-            print(f"[OOM] partition={partition}, timesteps={timestep}, loss={loss_type}")
-            if not CONTINUE_ON_OOM:
-                raise
-
+        run_training_and_evaluation(
+            config,
+            REPO_ROOT / job_dir,
+            resume=RESUME,
+            CONTINUE_ON_OOM=CONTINUE_ON_OOM,
+        )
 
 if __name__ == "__main__":
     main()

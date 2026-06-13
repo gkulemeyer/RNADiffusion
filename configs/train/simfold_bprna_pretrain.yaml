@@ -1,0 +1,16 @@
+experiment:
+  name: ""
+  note: "bpRNA simfold training config"
+  seed: 42
+
+data:
+  base_path: "data/BE/bprna/bprna_BE-max50-T20.csv"
+  partition_path: "data/BE_partitions/bprna/simfold/bprna_BE_simfolds_kfold_lt512_NOboostrap_{partition}-fold.csv"
+  partition_scheme: "simfold"
+  fold: 0
+
+model:
+  evaluate: true
+  load_pretrained: false
+  pretrained_path: "path/to/pretrained/model.ckptS"
+  timesteps: 5
