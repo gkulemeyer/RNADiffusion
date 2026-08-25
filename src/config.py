@@ -76,10 +76,18 @@ def prepare_experiment_config(config, experiment_dir=None):
         logging_config["experiment_dir"] = str(experiment_dir)
         logging_config["checkpoint_dir"] = str(experiment_dir / "checkpoints")
         logging_config["metrics_path"] = str(experiment_dir / "metrics.csv")
-        logging_config["ensemble_path"] = str(experiment_dir / "ensemble.csv")
+        logging_config["raw_ensemble_metrics_path"] = str(
+            experiment_dir / "raw_ensemble_metrics.csv"
+        )
+        logging_config["processed_ensemble_metrics_path"] = str(
+            experiment_dir / "processed_ensemble_metrics.csv"
+        )
+        logging_config["generated_ensemble_path"] = str(
+            experiment_dir / "generated_ensemble.csv"
+        )
         logging_config["ensemble_metadata_path"] = str(experiment_dir / "ensemble_metadata.yaml")
         logging_config["train_log_path"] = str(experiment_dir / "run.log")
-        logging_config["raw_samples_dir"] = str(experiment_dir / "raw_samples")
+        logging_config["samples_dir"] = str(experiment_dir / "samples")
         logging_config["lightning_dir"] = str(experiment_dir / "lightning")
 
     return prepared

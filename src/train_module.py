@@ -9,8 +9,13 @@ from src.model import build_model
 class RNADiffusionModule(L.LightningModule):
     def __init__(self, config):
         super().__init__()
-        self.config = config
+        self.config = config 
         self.model = build_model(config)
+        print(85*"#")
+        print(85*"#")
+        print("[INFO] initializing RNADiffusionModule with config: ")
+        for k,v in config.items():
+            print(f"  {k}: {v}")
         self.learning_rate = config["training"]["lr"]
         self.save_hyperparameters(config) 
         

@@ -6,5 +6,5 @@ consensus_sizes:
   - 3
   - 5
   - 7
-chunk_size: 8
+threshold: 0.1
 get_best_and_worst: true

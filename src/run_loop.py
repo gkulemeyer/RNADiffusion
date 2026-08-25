@@ -1,105 +1,98 @@
 from __future__ import annotations
 
-from src.config import clone_config
-from src.experiment import evaluate_checkpoint, prepare_run, train
-from src.run_io import RunIO, RunResolver
-from src.io import configure_logger
+import copy
+
 import torch as tr
 
-
-def evaluate_periodic_checkpoints(run, logger, batch_size1=False):
-    run = run if isinstance(run, RunIO) else RunIO(run)
-    checkpoints = run.periodic_checkpoints()
-
-    if not checkpoints:
-        print(f"[WARN] no periodic checkpoints found in {run.periodic_ckpt_dir}")
-        return
-
-    for checkpoint_path in checkpoints:
-        epoch = RunIO.checkpoint_epoch(checkpoint_path)
-        target_dir = run.periodic_eval_dir(epoch)
-        if (target_dir / "ensemble_stats.csv").exists():
-            print(f"[SKIP] epoch_{epoch:03d} already evaluated")
-            continue
-
-        evaluate_checkpoint(
-            run.root,
-            checkpoint=checkpoint_path,
-            output_dir=target_dir,
-            keep_samples=False,
-            logger=logger,
-            batch_size1=batch_size1,
-        )
-        print(f"[EVAL] wrote {target_dir}")
+from src.experiment import evaluate_checkpoint, prepare_run, train
+from src.run_io import RunIO
 
 
-def evaluate_run(run, logger=None, include_periodic=True, batch_size1=False):
-    run = run if isinstance(run, RunIO) else RunIO(run)
-    logger = logger or configure_logger(run.log_path)
-
-    if include_periodic:
-        evaluate_periodic_checkpoints(run, logger, batch_size1=batch_size1)
-
-    if not run.best_ckpt_path.exists():
-        print(f"[WARN] best checkpoint not found in {run.checkpoint_dir}")
-        return run.root
-
-    if run.best_eval_is_current():
-        print(f"[SKIP] best checkpoint already evaluated in {run.best_eval_dir}")
-        return run.root
-
-    evaluate_checkpoint(run.root, checkpoint="best", logger=logger, batch_size1=batch_size1)
-    print(f"[EVAL] wrote best checkpoint outputs in {run.best_eval_dir}")
-    return run.root
-
-
-def run_training_and_evaluation(config, job_dir, resume=True, CONTINUE_ON_OOM=True):
-    config = clone_config(config)
-    state = RunResolver(job_dir, resume=resume).build_state(config)
-    run = state.run
-
-    if run.run_is_complete(state.total_epochs):
-        print(f"[DONE] already complete: {run.root}")
-        return run.root
-
-    if state.should_train:
-        prepared_config, train_dir, logger = prepare_run(
-            state.config.to_dict(),
-            experiment_dir=run.train_dir,
-        )
-        try:
-            train(
-                prepared_config,
-                train_dir,
-                logger,
-                resume=str(state.checkpoint_path) if state.checkpoint_path else None,
-            )
-        except tr.cuda.OutOfMemoryError:
-            if CONTINUE_ON_OOM:
-                print("[OOM] training failed, changing batch size to 1 and retrying...")
-                prepared_config["training"]["batch_size"] = 1
-                train(
-                    prepared_config,
-                    train_dir,
-                    logger,
-                    resume=str(state.checkpoint_path) if state.checkpoint_path else None,
-                )
-            else:
-                raise
-    else:
-        logger = configure_logger(run.log_path)
-        print(f"[TRAIN] already complete at epoch {state.done_epochs}")
-
-    if not config.model.evaluate:
-        print("[DONE] skipping evaluation for pretrained model")
-        return run.root
+def _train(config, run, logger, resume, retry_on_oom):
     try:
-        evaluate_run(run, logger=logger, include_periodic=True)
+        return train(config, run, logger, resume=resume)
     except tr.cuda.OutOfMemoryError:
-        if CONTINUE_ON_OOM:
-            print("[OOM] evaluation failed, changing batch size to 1 and retrying...")
-            evaluate_run(run, logger=logger, include_periodic=True, batch_size1=True)
-        else:
+        if not retry_on_oom:
             raise
+
+    print("[OOM] training failed, retrying with batch size 1")
+    retry_config = copy.deepcopy(config)
+    retry_config["training"]["batch_size"] = 1
+    return train(retry_config, run, logger, resume=resume)
+
+
+def _evaluate(config, checkpoint, output_dir, retry_on_oom, keep_samples):
+    try:
+        return evaluate_checkpoint(
+            config,
+            checkpoint,
+            output_dir,
+            keep_samples=keep_samples,
+        )
+    except tr.cuda.OutOfMemoryError:
+        if not retry_on_oom:
+            raise
+
+    print("[OOM] evaluation failed, retrying with batch size 1")
+    return evaluate_checkpoint(
+        config,
+        checkpoint,
+        output_dir,
+        keep_samples=keep_samples,
+        batch_size1=True,
+    )
+
+
+def evaluate_periodic_checkpoints(
+    config,
+    run,
+    retry_on_oom=True,
+):
+    for checkpoint in run.periodic_checkpoints():
+        epoch = run.checkpoint_epoch(checkpoint)
+        _evaluate(
+            config,
+            checkpoint,
+            run.periodic_eval_dir(epoch),
+            retry_on_oom,
+            False,
+        )
+
+
+def run_training_and_evaluation(
+    config,
+    job_dir,
+    resume=True,
+    retry_on_oom=True,
+    evaluate_periodic=False,
+    keep_samples=False,
+):
+    config = copy.deepcopy(config)
+    run = RunIO(job_dir)
+    logger = prepare_run(config, run)
+
+    resume_checkpoint = run.last_checkpoint() if resume else None
+    completed_epochs = run.completed_epoch_count() if resume_checkpoint else 0
+
+    if completed_epochs < config["training"]["max_epochs"]:
+        _train(config, run, logger, resume_checkpoint, retry_on_oom)
+    else:
+        print(f"[TRAIN] already complete at epoch {completed_epochs}")
+
+    if config["model"]["evaluate"]:
+        if evaluate_periodic:
+            evaluate_periodic_checkpoints(
+                config,
+                run,
+                retry_on_oom=retry_on_oom,
+            )
+        _evaluate(
+            config,
+            run.best_ckpt_path,
+            run.best_eval_dir,
+            retry_on_oom,
+            keep_samples,
+        )
+
     print(f"[DONE] {run.root}")
-    return run.root 
+    return run.root
