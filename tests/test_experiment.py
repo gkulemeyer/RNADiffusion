@@ -1,10 +1,16 @@
 from pathlib import Path
 
-from src.experiment import evaluate_checkpoint, prepare_run
+import pandas as pd
+
+from src.experiment import (
+    evaluate_checkpoint,
+    evaluate_checkpoint_ensemble,
+    evaluate_ensemble_samples,
+    generate_ensemble_samples,
+    prepare_run,
+)
 from src.io import handle_metrics
-from src.io import write_yaml
 from src.run_io import RunIO
-import torch
 
 
 def make_csv_logger(log_dir: Path):
@@ -29,91 +35,170 @@ def make_config(tmp_path: Path):
     }
 
 
-def save_ckpt(path: Path, epoch: int):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"epoch": epoch}, path)
-
-
-def test_prepare_run_without_experiment_dir_uses_train_layout(tmp_path: Path):
-    config = make_config(tmp_path)
-
-    prepared, experiment_dir, _logger = prepare_run(config)
-
-    expected_train_dir = tmp_path / "logs" / "seed42" / "train"
-    assert experiment_dir == expected_train_dir
-    assert (expected_train_dir / "config.yaml").exists()
-    assert (expected_train_dir / "run.log").exists()
-    assert prepared["logging"]["experiment_dir"] == str(expected_train_dir)
-    assert prepared["logging"]["checkpoint_dir"] == str(expected_train_dir / "checkpoints")
-    assert prepared["logging"]["metrics_path"] == str(expected_train_dir / "metrics.csv")
-
-
-def test_prepare_run_with_explicit_train_dir_preserves_runio_layout(tmp_path: Path):
+def test_prepare_run_uses_explicit_run_without_derived_config_paths(tmp_path: Path):
     config = make_config(tmp_path)
     run = RunIO(tmp_path / "manual_run")
 
-    prepared, experiment_dir, _logger = prepare_run(config, experiment_dir=run.train_dir)
+    prepare_run(config, run)
 
-    assert experiment_dir == run.train_dir
     assert run.config_path.exists()
     assert run.log_path.exists()
-    assert prepared["logging"]["experiment_dir"] == str(run.train_dir)
-    assert prepared["logging"]["checkpoint_dir"] == str(run.checkpoint_dir)
-    assert prepared["logging"]["train_log_path"] == str(run.log_path)
+    assert "experiment_dir" not in config["logging"]
+    assert "metrics_path" not in config["logging"]
 
 
-def test_evaluate_checkpoint_uses_best_checkpoint_by_default(tmp_path: Path, monkeypatch):
-    run = RunIO(tmp_path / "run")
-    write_yaml(make_config(tmp_path), run.config_path)
-    save_ckpt(run.best_ckpt_path, epoch=3)
+def test_evaluate_checkpoint_uses_explicit_inputs_and_local_batch_copy(
+    tmp_path: Path,
+    monkeypatch,
+):
+    config = make_config(tmp_path)
+    config["training"]["batch_size"] = 8
+    checkpoint = tmp_path / "model.ckpt"
+    output_dir = tmp_path / "evaluation"
     calls = []
 
-    def fake_evaluate(config, checkpoint, logger, keep_samples=False):
-        calls.append((Path(config["logging"]["experiment_dir"]), checkpoint, keep_samples))
+    def fake_evaluate(received, checkpoint, output_dir, logger, keep_samples=False):
+        calls.append(
+            (received["training"]["batch_size"], checkpoint, output_dir, keep_samples)
+        )
 
     monkeypatch.setattr("src.experiment.evaluate_checkpoint_ensemble", fake_evaluate)
 
-    output_dir = evaluate_checkpoint(run.root, logger=object())
-
-    assert output_dir == run.best_eval_dir
-    assert calls == [(run.best_eval_dir, run.best_ckpt_path, False)]
-
-
-def test_evaluate_checkpoint_can_use_last_checkpoint(tmp_path: Path, monkeypatch):
-    run = RunIO(tmp_path / "run")
-    write_yaml(make_config(tmp_path), run.config_path)
-    save_ckpt(run.last_ckpt_path, epoch=4)
-    calls = []
-    monkeypatch.setattr(
-        "src.experiment.evaluate_checkpoint_ensemble",
-        lambda config, checkpoint, logger, keep_samples=False: calls.append(
-            (Path(config["logging"]["experiment_dir"]), checkpoint)
-        ),
+    result = evaluate_checkpoint(
+        config,
+        checkpoint,
+        output_dir,
+        logger=object(),
+        keep_samples=True,
+        batch_size1=True,
     )
 
-    output_dir = evaluate_checkpoint(run.root, checkpoint="last", logger=object())
+    assert result == output_dir
+    assert calls == [(1, checkpoint, output_dir, True)]
+    assert config["training"]["batch_size"] == 8
 
-    assert output_dir == run.root / "eval" / "last"
-    assert calls == [(run.root / "eval" / "last", run.last_ckpt_path)]
 
+def test_generate_ensemble_samples_builds_seeds_once_and_passes_threshold(
+    tmp_path: Path,
+    monkeypatch,
+):
+    calls = {}
+    model = object()
+    loader = object()
+    config = {
+        "ensemble": {"num_samples": 3, "base_seed": 42, "threshold": 0.6},
+    }
+    monkeypatch.setattr("src.experiment.load_model_checkpoint", lambda *args, **kwargs: model)
+    monkeypatch.setattr("src.experiment.build_dataloader", lambda *args, **kwargs: loader)
+    monkeypatch.setattr("src.experiment.RunIO.checkpoint_epoch", lambda checkpoint: 7)
 
-def test_evaluate_checkpoint_accepts_explicit_checkpoint_path(tmp_path: Path, monkeypatch):
-    run = RunIO(tmp_path / "run")
-    write_yaml(make_config(tmp_path), run.config_path)
-    checkpoint = run.periodic_ckpt_dir / "epoch005.ckpt"
-    save_ckpt(checkpoint, epoch=5)
-    calls = []
-    monkeypatch.setattr(
-        "src.experiment.evaluate_checkpoint_ensemble",
-        lambda config, checkpoint, logger, keep_samples=False: calls.append(
-            (Path(config["logging"]["experiment_dir"]), checkpoint, keep_samples)
-        ),
+    def fake_save(**kwargs):
+        calls["save"] = kwargs
+
+    def fake_metadata(**kwargs):
+        calls["metadata"] = kwargs
+
+    monkeypatch.setattr("src.experiment.save_ensemble_samples", fake_save)
+    monkeypatch.setattr("src.experiment.write_samples_metadata", fake_metadata)
+
+    samples_dir = generate_ensemble_samples(
+        config,
+        checkpoint=tmp_path / "best.ckpt",
+        samples_dir=tmp_path / "samples",
     )
 
-    output_dir = evaluate_checkpoint(checkpoint, logger=object(), keep_samples=True)
+    assert samples_dir == tmp_path / "samples"
+    assert calls["save"]["sample_seeds"] == [42, 43, 44]
+    assert calls["save"]["threshold"] == 0.6
+    assert calls["metadata"]["sample_seeds"] == [42, 43, 44]
+    assert calls["metadata"]["threshold"] == 0.6
+    assert "chunk_size" not in calls["save"]
+    assert "chunk_size" not in calls["metadata"]
 
-    assert output_dir == run.periodic_eval_dir(5)
-    assert calls == [(run.periodic_eval_dir(5), checkpoint, True)]
+
+def test_evaluate_ensemble_samples_uses_explicit_default_names(
+    tmp_path: Path,
+    monkeypatch,
+):
+    samples_dir = tmp_path / "samples"
+    samples_dir.mkdir()
+    monkeypatch.setattr(
+        "src.experiment.evaluate_samples_dir",
+        lambda **kwargs: pd.DataFrame(
+            [{"seq_id": "a", "cons_k1_mean": 1.0, "cons_k1_std": 0.0}]
+        ),
+    )
+    monkeypatch.setattr("src.experiment.write_ensemble_metadata", lambda **kwargs: {})
+
+    metrics_path, stats_path = evaluate_ensemble_samples(
+        samples_dir,
+        trials=1,
+        consensus_sizes=[1],
+        seed=42,
+        get_best_and_worst=False,
+        sample_type="processed",
+    )
+
+    assert metrics_path == tmp_path / "processed_ensemble_metrics.csv"
+    assert stats_path == tmp_path / "processed_ensemble_stats.csv"
+    assert metrics_path.exists()
+    assert stats_path.exists()
+
+
+def test_evaluate_checkpoint_generates_once_evaluates_both_and_exports(
+    tmp_path: Path,
+    monkeypatch,
+):
+    output_dir = tmp_path / "evaluation"
+    samples_dir = output_dir / "samples"
+    calls = {"generate": [], "evaluate": [], "export": []}
+    config = {
+        "ensemble": {
+            "num_samples": 2,
+            "base_seed": 42,
+            "threshold": 0.5,
+            "trials": 1,
+            "consensus_sizes": [1],
+            "get_best_and_worst": False,
+        },
+    }
+
+    def fake_generate(**kwargs):
+        calls["generate"].append(kwargs)
+        samples_dir.mkdir(parents=True, exist_ok=True)
+        return samples_dir
+
+    monkeypatch.setattr("src.experiment.generate_ensemble_samples", fake_generate)
+    monkeypatch.setattr(
+        "src.experiment.evaluate_ensemble_samples",
+        lambda **kwargs: calls["evaluate"].append(kwargs),
+    )
+    monkeypatch.setattr(
+        "src.experiment.export_db_ensemble",
+        lambda **kwargs: calls["export"].append(kwargs),
+    )
+    logger = type("Logger", (), {"info": lambda *args, **kwargs: None})()
+
+    evaluate_checkpoint_ensemble(
+        config,
+        checkpoint=tmp_path / "best.ckpt",
+        output_dir=output_dir,
+        logger=logger,
+        keep_samples=True,
+    )
+
+    assert len(calls["generate"]) == 1
+    assert [call["sample_type"] for call in calls["evaluate"]] == [
+        "raw",
+        "processed",
+    ]
+    assert len(calls["export"]) == 1
+    assert calls["export"][0]["samples_dir"] == samples_dir
+    assert calls["export"][0]["output_csv"] == output_dir / "generated_ensemble.csv"
+    assert [call["output_path"] for call in calls["evaluate"]] == [
+        output_dir / "raw_ensemble_metrics.csv",
+        output_dir / "processed_ensemble_metrics.csv",
+    ]
 
 
 def test_handle_metrics_writes_single_compacted_metrics_file(tmp_path: Path):
@@ -133,14 +218,7 @@ def test_handle_metrics_writes_single_compacted_metrics_file(tmp_path: Path):
         encoding="utf-8",
     )
 
-    config = {
-        "logging": {
-            "lightning_dir": str(tmp_path / "lightning"),
-            "metrics_path": str(metrics_path),
-        }
-    }
-
-    handle_metrics([make_csv_logger(lightning_dir)], config, resume=False)
+    handle_metrics([make_csv_logger(lightning_dir)], metrics_path, resume=False)
 
     assert metrics_path.exists()
     assert not (tmp_path / "lightning" / "metrics_raw.csv").exists()
@@ -180,14 +258,7 @@ def test_handle_metrics_merges_resume_into_same_metrics_file(tmp_path: Path):
         encoding="utf-8",
     )
 
-    config = {
-        "logging": {
-            "lightning_dir": str(tmp_path / "lightning"),
-            "metrics_path": str(metrics_path),
-        }
-    }
-
-    handle_metrics([make_csv_logger(lightning_dir)], config, resume=True)
+    handle_metrics([make_csv_logger(lightning_dir)], metrics_path, resume=True)
 
     assert metrics_path.read_text(encoding="utf-8") == "\n".join(
         [

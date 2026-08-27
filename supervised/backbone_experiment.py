@@ -141,7 +141,7 @@ def train_backbone(config, run_root, logger, resume=None):
     )
 
     trainer.fit(model, datamodule=data, ckpt_path=resume)
-    handle_metrics(loggers, config, resume=resume is not None)
+    handle_metrics(loggers, run.metrics_path, resume=resume is not None)
 
     best_ckpt = ckpt_cb.best_model_path or str(run.best_ckpt_path if run.best_ckpt_path.exists() else "")
     last_ckpt = ckpt_cb.last_model_path or str(run.last_checkpoint() or "")
