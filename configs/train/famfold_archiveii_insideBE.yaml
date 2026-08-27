@@ -1,0 +1,16 @@
+experiment:
+  name: ""
+  note: "ArchiveII insideBE RNADiffusion training config"
+  seed: 42
+
+data:
+  base_path: "data/BE/archiveii_insideBE/archiveii_inside_BE-max50-T37.csv"
+  partition_path: "data/BE_partitions/archiveii_insideBE/famfold/archiveii_insideBE_famfold_splits.csv"
+  partition_scheme: "famfold"
+  fold: ""
+
+model:
+  evaluate: true
+  load_pretrained: false
+  pretrained_path: "path/to/pretrained/model.ckptS"
+  timesteps: 5

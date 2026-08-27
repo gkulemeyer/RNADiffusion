@@ -86,15 +86,24 @@ def write_samples_metadata(
     checkpoint_path,
     num_samples,
     base_seed,
-    chunk_size,
+    sample_seeds,
+    threshold,
     checkpoint_epoch=None,
 ):
     metadata = {
         "checkpoint_path": str(checkpoint_path),
         "samples_dir": str(samples_dir),
-        "num_samples": int(num_samples),
-        "base_seed": int(base_seed),
-        "chunk_size": int(chunk_size),
+        "num_samples": num_samples,
+        "base_seed": base_seed,
+        "sample_seeds": sample_seeds,
+        "stored_samples": ["raw", "processed"],
+        "processing": {
+            "score": "sigmoid_channel_1",
+            "threshold": threshold,
+            "triangle": "upper",
+            "multiplet_resolution": "greedy_highest_score",
+            "symmetric_output": True,
+        },
         "generated_at": datetime.now().isoformat(timespec="seconds"),
     }
     if checkpoint_epoch is not None:
@@ -130,25 +139,20 @@ def write_ensemble_metadata(
         target_path = Path(metadata_path)
     else:
         output_path = Path(output_path)
-        if output_path.name == "ensemble.csv":
-            target_path = output_path.with_name("ensemble_metadata.yaml")
-        else:
-            target_path = output_path.with_name(f"{output_path.stem}_metadata.yaml")
+        target_path = output_path.with_name(f"{output_path.stem}_metadata.yaml")
     write_yaml(metadata, target_path)
     return metadata
 
 
-def handle_metrics(loggers, config, resume=False):
+def handle_metrics(loggers, output_path, resume=False):
     csv_logger = next(
         (l for l in loggers if l.__class__.__name__ == "CSVLogger"), None
     )
     if csv_logger is None:
         raise RuntimeError("CSVLogger not found")
 
-    log_cfg = config["logging"]
-
     src = Path(csv_logger.log_dir) / "metrics.csv"
-    dst = Path(log_cfg["metrics_path"])
+    dst = Path(output_path)
 
     dst.parent.mkdir(parents=True, exist_ok=True)
 

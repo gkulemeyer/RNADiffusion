@@ -60,6 +60,27 @@ def dot2bp(structure):
             base_pairs.extend(parsed)
     return list(sorted(base_pairs))
 
+def mat2bp(processed_sample):
+    """Convert a processed contact matrix [L, L] to 1-based base pairs."""
+    length = processed_sample.shape[0]
+    i, j = tr.triu_indices(
+        length,
+        length,
+        offset=1,
+        device=processed_sample.device,
+    )
+    valid = processed_sample[i, j] > 0
+    return tr.stack([i[valid] + 1, j[valid] + 1], dim=1).tolist()
+
+def mat2db(processed_sample):
+    """Convert a processed contact matrix to dot-bracket notation."""
+    structure = ["."] * processed_sample.shape[0]
+
+    for i, j in mat2bp(processed_sample):
+        structure[i - 1] = "("
+        structure[j - 1] = ")"
+
+    return "".join(structure)
 
 ### Load as a dataset with partitioning
 def _check_columns(dataframe, required_columns):

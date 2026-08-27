@@ -4,15 +4,18 @@ experiment:
   seed: 42
 
 data:
-  base_path: "data/ArchiveII_max_length_128.csv"
+  base_path: "data/ArchiveII.csv"
   partition_path: "data/others/ArchiveII_splits.csv"
   partition_scheme: "simfold"
   fold: 0
 
 model:
+  evaluate: true
+  load_pretrained: false
+  pretrained_path: null
   timesteps: 5
   num_classes: 2
-  loss_type: "vb_all"
+  loss_type: "vb_stochastic"
   in_channels: 18
   out_channels: 2
   base_dim: 32

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import csv
 import json
 import shutil
@@ -17,13 +18,15 @@ from src.train_module import (
     TestMetricsCollector,
     load_rna_module_checkpoint,
 )
-from src.ensemble import generate_raw_samples, evaluate_samples_dir, evaluate_samples_stats
+from src.ensemble import (
+    evaluate_samples_dir,
+    evaluate_samples_stats,
+    export_db_ensemble,
+    save_ensemble_samples,
+)
 
 from src.config import (
-    build_experiment_dir,
-    load_config,
     load_ensemble_defaults,
-    prepare_experiment_config,
     save_config,
 )
 from src.run_io import RunIO
@@ -37,26 +40,16 @@ from src.io import (
 )
 
 
-def prepare_run(config, experiment_dir=None):
-    if experiment_dir is None:
-        base_config = prepare_experiment_config(config)
-        run_root = Path(build_experiment_dir(base_config))
-        experiment_dir = RunIO(run_root).train_dir
-    else:
-        experiment_dir = Path(experiment_dir)
+def prepare_run(config, run):
+    run.train_dir.mkdir(parents=True, exist_ok=True)
+    save_config(config, run.train_dir)
 
-    config = prepare_experiment_config(config, experiment_dir)
-
-    experiment_dir.mkdir(parents=True, exist_ok=True)
-    save_config(config, experiment_dir)
-
-    run_logger = configure_logger(config["logging"]["train_log_path"])
+    run_logger = configure_logger(run.log_path)
     seed_everything(config["experiment"]["seed"], workers=True)
 
-    run_logger.info("Starting experiment in %s", experiment_dir)
+    run_logger.info("Starting experiment in %s", run.train_dir)
     run_logger.info("Resolved config: %s", json.dumps(config, indent=2))
-
-    return config, experiment_dir, run_logger
+    return run_logger
 
 class TimingCallback(Callback):
     def __init__(self, logger): 
@@ -88,16 +81,15 @@ class TimingCallback(Callback):
                 duration / 60,
             )
 
-def train(config, experiment_dir, logger, resume=None):
+def train(config, run, logger, resume=None):
     log_cfg = config["logging"]
     train_cfg = config["training"]
-    checkpoint_interval = max(1, int(log_cfg.get("checkpoint_every_n_epochs", 1)))
+    validation_interval = int(train_cfg["check_val_every_n_epoch"])
 
     data = RNADataModule(config)
     model = RNADiffusionModule(config)
-    loggers = build_loggers(config, experiment_dir)
+    loggers = build_loggers(config, run.train_dir)
 
-    run = RunIO.from_train_dir(experiment_dir)
     best_ckpt_cb = ModelCheckpoint(
         dirpath=run.checkpoint_dir,
         filename="best",
@@ -113,7 +105,7 @@ def train(config, experiment_dir, logger, resume=None):
         monitor=None,
         save_top_k=-1,
         save_last=False,
-        every_n_epochs=checkpoint_interval,
+        every_n_epochs=validation_interval,
         auto_insert_metric_name=False,
     )
     timer = TimingCallback(logger)
@@ -125,7 +117,7 @@ def train(config, experiment_dir, logger, resume=None):
         devices=train_cfg["devices"],
         precision=train_cfg["precision"],
         accumulate_grad_batches=train_cfg["accumulate_grad_batches"],
-        check_val_every_n_epoch=max(1, int(train_cfg.get("check_val_every_n_epoch", 1))),
+        check_val_every_n_epoch=int(train_cfg["check_val_every_n_epoch"]),
         logger=loggers,
         callbacks=[best_ckpt_cb, periodic_ckpt_cb, timer],
         log_every_n_steps=log_cfg["log_every_n_steps"],
@@ -135,9 +127,8 @@ def train(config, experiment_dir, logger, resume=None):
     last_ckpt_path = run.last_ckpt_path
     last_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
     trainer.save_checkpoint(last_ckpt_path)
-    run.normalize_periodic_checkpoint_names()
 
-    handle_metrics(loggers, config, resume=resume is not None)
+    handle_metrics(loggers, run.metrics_path, resume=resume is not None)
 
     ckpt = best_ckpt_cb.best_model_path or str(last_ckpt_path)
     if not ckpt:
@@ -149,22 +140,25 @@ def train(config, experiment_dir, logger, resume=None):
 
 def _stats_output_path(output_path):
     output_path = Path(output_path)
-    if output_path.name == "ensemble.csv":
-        return output_path.with_name("ensemble_stats.csv")
+    if output_path.name.endswith("_ensemble_metrics.csv"):
+        return output_path.with_name(
+            output_path.name.replace("_ensemble_metrics.csv", "_ensemble_stats.csv")
+        )
     return output_path.with_name(f"{output_path.stem}_stats.csv")
 
 
 def generate_ensemble_samples(
     config,
     checkpoint,
-    samples_dir=None,
+    samples_dir,
     num_samples=None,
     base_seed=None,
     batch_size=None,
     clear_samples=False,
+    threshold=None,
 ):
     ens_cfg = config["ensemble"]
-    samples_dir = Path(samples_dir or config["logging"].get("raw_samples_dir"))
+    samples_dir = Path(samples_dir)
     samples_dir.mkdir(parents=True, exist_ok=True)
 
     if clear_samples:
@@ -179,17 +173,20 @@ def generate_ensemble_samples(
         shuffle=False,
     )
 
-    num_samples = int(num_samples or ens_cfg["num_samples"])
+    num_samples = int(ens_cfg["num_samples"] if num_samples is None else num_samples)
     base_seed = int(ens_cfg["base_seed"] if base_seed is None else base_seed)
-    chunk_size = int(ens_cfg["chunk_size"])
+    threshold = float(ens_cfg["threshold"] if threshold is None else threshold)
+    sample_seeds = [
+        base_seed + sample_id
+        for sample_id in range(num_samples)
+    ]
 
-    generate_raw_samples(
+    save_ensemble_samples(
         model=model,
         loader=loader,
         output_dir=samples_dir,
-        num_samples=num_samples,
-        base_seed=base_seed,
-        chunk_size=chunk_size,
+        sample_seeds=sample_seeds,
+        threshold=threshold,
     )
 
     write_samples_metadata(
@@ -198,7 +195,8 @@ def generate_ensemble_samples(
         checkpoint_epoch=RunIO.checkpoint_epoch(checkpoint),
         num_samples=num_samples,
         base_seed=base_seed,
-        chunk_size=chunk_size,
+        sample_seeds=sample_seeds,
+        threshold=threshold,
     )
     return samples_dir
 
@@ -210,16 +208,24 @@ def evaluate_ensemble_samples(
     consensus_sizes=None,
     seed=None,
     metadata_path=None,
-    get_best_and_worst=False,
+    get_best_and_worst=None,
+    sample_type="raw",
 ):
     samples_dir = Path(samples_dir)
-    output_path = Path(output_path or samples_dir.parent / "ensemble.csv")
+    output_path = Path(
+        output_path
+        or samples_dir.parent / f"{sample_type}_ensemble_metrics.csv"
+    )
     ens_cfg = load_ensemble_defaults()
 
     trials = int(trials if trials is not None else ens_cfg["trials"])
     consensus_sizes = list(consensus_sizes or ens_cfg["consensus_sizes"])
     seed = int(seed if seed is not None else ens_cfg["base_seed"])
-    get_best_and_worst = bool(get_best_and_worst or ens_cfg["get_best_and_worst"])
+    get_best_and_worst = bool(
+        ens_cfg["get_best_and_worst"]
+        if get_best_and_worst is None
+        else get_best_and_worst
+    )
 
     df = evaluate_samples_dir(
         samples_dir=samples_dir,
@@ -227,6 +233,7 @@ def evaluate_ensemble_samples(
         trials=trials,
         seed=seed,
         get_best_and_worst=get_best_and_worst,
+        sample_type=sample_type,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
@@ -245,16 +252,23 @@ def evaluate_ensemble_samples(
         trials=trials,
         consensus_sizes=consensus_sizes,
         seed=seed,
+        get_best_and_worst=get_best_and_worst,
         metadata_path=metadata_path,
     )
     return output_path, stats_path
 
 
-def evaluate_checkpoint_ensemble(config, checkpoint, logger, keep_samples=False):
-    log_cfg = config["logging"]
+def evaluate_checkpoint_ensemble(
+    config,
+    checkpoint,
+    output_dir,
+    logger,
+    keep_samples=False,
+):
     ens_cfg = config["ensemble"]
-
-    samples_dir = Path(log_cfg["raw_samples_dir"])
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    samples_dir = output_dir / "samples"
 
     samples_start = time.perf_counter()
     generate_ensemble_samples(
@@ -263,6 +277,7 @@ def evaluate_checkpoint_ensemble(config, checkpoint, logger, keep_samples=False)
         samples_dir=samples_dir,
         num_samples=ens_cfg["num_samples"],
         base_seed=ens_cfg["base_seed"],
+        threshold=ens_cfg["threshold"],
         clear_samples=True,
     )
     samples_time = time.perf_counter() - samples_start
@@ -275,13 +290,21 @@ def evaluate_checkpoint_ensemble(config, checkpoint, logger, keep_samples=False)
         Path(checkpoint).stem,
     )
 
-    evaluate_ensemble_samples(
+    for sample_type in ("raw", "processed"):
+        evaluate_ensemble_samples(
+            samples_dir=samples_dir,
+            output_path=output_dir / f"{sample_type}_ensemble_metrics.csv",
+            trials=ens_cfg["trials"],
+            consensus_sizes=ens_cfg["consensus_sizes"],
+            seed=ens_cfg["base_seed"],
+            metadata_path=output_dir / "ensemble_metadata.yaml",
+            get_best_and_worst=ens_cfg["get_best_and_worst"],
+            sample_type=sample_type,
+        )
+
+    export_db_ensemble(
         samples_dir=samples_dir,
-        output_path=log_cfg["ensemble_path"],
-        trials=ens_cfg["trials"],
-        consensus_sizes=ens_cfg["consensus_sizes"],
-        seed=ens_cfg["base_seed"],
-        metadata_path=log_cfg["ensemble_metadata_path"],
+        output_csv=output_dir / "generated_ensemble.csv",
     )
 
     if not keep_samples:
@@ -290,77 +313,27 @@ def evaluate_checkpoint_ensemble(config, checkpoint, logger, keep_samples=False)
     logger.info("Evaluation done")
 
 
-def _run_from_checkpoint_path(checkpoint_path):
-    checkpoint_path = Path(checkpoint_path)
-    if checkpoint_path.parent.name == "checkpoints":
-        return RunIO.from_train_dir(checkpoint_path.parent.parent)
-    if (
-        checkpoint_path.parent.name == "periodic"
-        and checkpoint_path.parent.parent.name == "checkpoints"
-    ):
-        return RunIO.from_train_dir(checkpoint_path.parent.parent.parent)
-    raise ValueError(
-        "Could not infer run directory from checkpoint path. "
-        "Expected <run>/train/checkpoints/*.ckpt."
-    )
-
-
-def _resolve_checkpoint(run, checkpoint):
-    if checkpoint == "best":
-        return run.best_ckpt_path
-    if checkpoint == "last":
-        return run.last_ckpt_path
-    return Path(checkpoint)
-
-
-def _default_eval_dir(run, checkpoint, checkpoint_path):
-    if checkpoint_path == run.best_ckpt_path:
-        return run.best_eval_dir
-    if checkpoint_path == run.last_ckpt_path:
-        return run.root / "eval" / "last"
-    if checkpoint_path.parent.name == "periodic":
-        return run.periodic_eval_dir(RunIO.checkpoint_epoch(checkpoint_path))
-    if checkpoint == "best":
-        return run.best_eval_dir
-    if checkpoint == "last":
-        return run.root / "eval" / "last"
-    raise ValueError("output_dir is required for explicit checkpoint paths")
-
-
 def evaluate_checkpoint(
-    target,
-    checkpoint="best",
-    output_dir=None,
+    config,
+    checkpoint,
+    output_dir,
     keep_samples=False,
     logger=None,
     batch_size1=False,
 ):
-    target = Path(target)
-    if target.suffix == ".ckpt":
-        run = _run_from_checkpoint_path(target)
-        checkpoint_path = target
-    else:
-        run = RunIO(target)
-        checkpoint_path = _resolve_checkpoint(run, checkpoint)
-
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-
-    output_dir = Path(output_dir) if output_dir is not None else _default_eval_dir(
-        run,
-        checkpoint,
-        checkpoint_path,
-    )
+    config = copy.deepcopy(config)
+    checkpoint = Path(checkpoint)
+    output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    config = prepare_experiment_config(load_config(run.config_path), output_dir)
     if batch_size1:
         print("[EVAL] setting batch size to 1 for evaluation")
-        config["training"]["batch_size"] = 1 
+        config["training"]["batch_size"] = 1
     logger = logger or configure_logger(output_dir / "eval.log")
 
     evaluate_checkpoint_ensemble(
         config,
-        checkpoint_path,
+        checkpoint,
+        output_dir,
         logger,
         keep_samples=keep_samples,
     )
@@ -406,13 +379,3 @@ def test_checkpoint(config, checkpoint, output_path=None, batch_size=None):
             writer.writerow(summary)
 
     return summary
-
-
-def evaluate(config, experiment_dir, checkpoint, logger, keep_samples=False):
-    config = prepare_experiment_config(config, experiment_dir)
-    return evaluate_checkpoint_ensemble(
-        config,
-        checkpoint,
-        logger,
-        keep_samples=keep_samples,
-    )

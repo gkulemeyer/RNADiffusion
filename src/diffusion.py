@@ -204,26 +204,43 @@ class DiffusionModel(nn.Module):
             return F.softmax(out, dim=1)
   
     
-    def pred_p_xt_1_from_xt(self, xt, t, condition, lengths=None):
-        pred = self.predict_start(xt, t, condition, lengths=lengths)
-        return self.q_posterior(pred, xt, t)
+    def pred_p_xt_1_from_xt(self, xt, t, condition, lengths=None, return_logits=False):
+        if return_logits:
+            logits = self.predict_start(xt, t, condition, lengths=lengths, return_logits=True)
+            pred = F.softmax(logits, dim=1)
+        else:
+            pred = self.predict_start(xt, t, condition, lengths=lengths)
 
+        posterior = self.q_posterior(pred, xt, t)
+        if return_logits:
+            return posterior, logits
+        
+        return posterior
+    
     def q_sample(self, x0_oh, t, lengths=None):
         qxt_probs = self.q_pred(x0_oh, t)
         qxt_probs = tr.clamp(qxt_probs, min=1e-20, max=1.0) 
         return self.sample_from_probs(qxt_probs, lengths=lengths)
 
     @tr.no_grad()
-    def p_sample(self, xt, t, condition, lengths=None):
-        # Get posterior probabilities [B, 2, L, L] considering the mask        
-        posterior_probs = self.pred_p_xt_1_from_xt(xt, t, condition, lengths=lengths)
+    def p_sample(self, xt, t, condition, lengths=None, return_logits=False):
+        # Get posterior probabilities [B, 2, L, L] considering the mask 
+        if return_logits:
+            posterior_probs, logits = self.pred_p_xt_1_from_xt(xt, t, condition, lengths=lengths, return_logits=True)
+        else:   
+            posterior_probs = self.pred_p_xt_1_from_xt(xt, t, condition, lengths=lengths)
+
         # Sample from the predicted distribution considering the mask
         out = self.sample_from_probs(posterior_probs, lengths=lengths)
+
+        if return_logits:
+            return out, logits
+
         return out
 
 
     @tr.no_grad()
-    def p_sample_loop(self, shape, condition, lengths=None):
+    def p_sample_loop(self, shape, condition, lengths=None, return_logits=False):
         """Sample an image from pure noise."""
         batch_size = shape[0]
         device = self.alphas.device
@@ -232,15 +249,18 @@ class DiffusionModel(nn.Module):
 
         for t in reversed(range(0, self.time_steps)):
             t_batch = tr.full((batch_size,), t, device=device, dtype=tr.long)
+            if return_logits and t == 0:
+                xt, logits = self.p_sample(xt, t_batch, condition, lengths=lengths, return_logits=True)
+                return xt, logits
             xt = self.p_sample(xt, t_batch, condition, lengths=lengths)
         return xt
 
     
     @tr.no_grad()
-    def sample(self, condition, lengths=None):
+    def sample(self, condition, lengths=None, return_logits=False):
         # batch_size, height, width, dim=1 -> channel
         shape = (condition.shape[0], condition.shape[2], condition.shape[3])
-        samples = self.p_sample_loop(shape, condition, lengths=lengths)
+        samples = self.p_sample_loop(shape, condition, lengths=lengths, return_logits=return_logits)
         return samples
     
 

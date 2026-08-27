@@ -32,6 +32,8 @@ def test_load_yaml_config(tmp_path: Path):
     assert config["experiment"]["name"] == "test"
     assert config["training"]["batch_size"] == 1
     assert config["ensemble"]["num_samples"] == 16
+    assert config["model"]["load_pretrained"] is False
+    assert config["model"]["pretrained_path"] is None
 
 
 def test_prepare_experiment_config_adds_metadata(tmp_path: Path):
@@ -56,7 +58,16 @@ def test_prepare_experiment_config_adds_metadata(tmp_path: Path):
     prepared = prepare_experiment_config(config, "logs/RNADiffusion/exp_test")
     assert prepared["experiment"]["uuid"]
     assert prepared["experiment"]["timestamp"]
-    assert prepared["logging"]["ensemble_path"].endswith("ensemble.csv")
+    assert prepared["logging"]["raw_ensemble_metrics_path"].endswith(
+        "raw_ensemble_metrics.csv"
+    )
+    assert prepared["logging"]["processed_ensemble_metrics_path"].endswith(
+        "processed_ensemble_metrics.csv"
+    )
+    assert prepared["logging"]["generated_ensemble_path"].endswith(
+        "generated_ensemble.csv"
+    )
+    assert prepared["logging"]["samples_dir"].endswith("samples")
     assert prepared["logging"]["ensemble_metadata_path"].endswith("ensemble_metadata.yaml")
     assert prepared["logging"]["lightning_dir"].endswith("lightning")
     assert prepared["logging"]["train_log_path"].endswith("run.log")
@@ -96,6 +107,8 @@ def test_load_train_defaults_from_configs():
     assert defaults["training"]["batch_size"] == 1
     assert defaults["training"]["check_val_every_n_epoch"] == 1
     assert defaults["model"]["timesteps"] == 5
+    assert defaults["model"]["load_pretrained"] is False
+    assert defaults["model"]["pretrained_path"] is None
     assert defaults["logging"]["checkpoint_every_n_epochs"] == 1
     assert defaults["data"]["partition_scheme"] == "simfold"
 
@@ -104,3 +117,5 @@ def test_load_ensemble_defaults_from_configs():
     defaults = load_ensemble_defaults()
     assert defaults["num_samples"] == 16
     assert defaults["consensus_sizes"] == [1, 3, 5, 7]
+    assert defaults["threshold"] == 0.5
+    assert "chunk_size" not in defaults

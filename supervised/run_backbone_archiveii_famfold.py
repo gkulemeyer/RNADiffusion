@@ -24,17 +24,17 @@ RESUME = True
 PRECISION = "16-mixed"
 BASE_DIM = [32]
 
-BATCH_SIZE = 1
-ACCUMULATE_GRAD_BATCHES = 4
+BATCH_SIZE = 8
+ACCUMULATE_GRAD_BATCHES = 1
 LR = 0.001
 
 VAL_EVERY_N_EPOCHS = 1
 CHECKPOINT_EVERY_N_EPOCHS = 1
 
-FOLDS = ["srp", "tRNA", "5s"]
+FOLDS = ["grp1", "tmRNA", "23s", "telomerase", "RNaseP", "5s", "srp", "tRNA", "16s"] 
 EPOCHS = 20
 
-EXPERIMENT_NAME = "ArchiveII_backbone_famfold"
+EXPERIMENT_NAME = "ArchiveII_backbone_famfold_20e"
 BACKBONE_IN_CHANNELS = 16
 
 
@@ -42,15 +42,7 @@ BACKBONE_IN_CHANNELS = 16
 # helpers
 # ------------------------------------------------------------
 def build_job_dir(experiment_name, fold, base_dim, seed):
-    return (
-        Path("supervised")
-        / "logs"
-        / experiment_name
-        / fold
-        / f"bd{base_dim}"
-        / f"bs{BATCH_SIZE}_acc{ACCUMULATE_GRAD_BATCHES}"
-        / f"seed{seed}"
-    )
+    return Path("supervised") / "logs" / experiment_name / fold / f"bd{base_dim}" 
 
 
 def latest_attempt_dir(job_dir):
@@ -99,7 +91,7 @@ def build_run_config(base_config, experiment_name, repo_root, fold, epochs, base
         f"{experiment_name} | {fold}, bd={base_dim}, e={epochs}, "
         f"val={VAL_EVERY_N_EPOCHS}, ckpt={CHECKPOINT_EVERY_N_EPOCHS}"
     )
-    config.data.base_path = str(repo_root / "data" / "ArchiveII_max_length_128.csv")
+    config.data.base_path = str(repo_root / "data" / "ArchiveII.csv")
     config.data.partition_path = str(repo_root / "data" / "famfold" / "ArchiveII_famfold.csv")
     config.data.partition_scheme = "famfold"
     config.data.fold = fold

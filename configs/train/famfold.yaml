@@ -1,34 +1,16 @@
 experiment:
   name: ""
-  note: "Base RNADiffusion training config"
+  note: "Famfold training config"
   seed: 42
 
 data:
-  base_path: "data/ArchiveII_max_length_128.csv"
+  base_path: "data/ArchiveII.csv"
   partition_path: "data/famfold/ArchiveII_famfold.csv"
   partition_scheme: "famfold"
-  fold: ""
+  fold: "" 
 
 model:
+  evaluate: true
+  load_pretrained: false
+  pretrained_path: "path/to/pretrained/model.ckptS"
   timesteps: 5
-  num_classes: 2
-  loss_type: "vb_all"
-  in_channels: 18
-  out_channels: 2
-  base_dim: 32
-
-training:
-  max_epochs: 10
-  batch_size: 4
-  accumulate_grad_batches: 1
-  check_val_every_n_epoch: 1
-  lr: 0.001
-  num_workers: 2
-  accelerator: "auto"
-  devices: 1
-  precision: "32"
-
-logging:
-  save_dir: "logs/RNADiffusion"
-  log_every_n_steps: 1
-  checkpoint_every_n_epochs: 1

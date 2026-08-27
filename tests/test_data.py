@@ -3,7 +3,33 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from src.data import RNADataModule, SeqDataset, _load_partitioned_data, build_dataloader
+import torch
+
+from src.data import (
+    RNADataModule,
+    SeqDataset,
+    _load_partitioned_data,
+    build_dataloader,
+    mat2bp,
+    mat2db,
+)
+
+
+def test_mat2bp_reads_only_upper_triangle_and_uses_one_based_indices():
+    matrix = torch.zeros((4, 4), dtype=torch.int8)
+    matrix[0, 3] = 1
+    matrix[2, 1] = 1
+    matrix[2, 2] = 1
+
+    assert mat2bp(matrix) == [[1, 4]]
+
+
+def test_mat2db_uses_processed_base_pairs():
+    matrix = torch.zeros((4, 4), dtype=torch.int8)
+    matrix[0, 3] = matrix[3, 0] = 1
+    matrix[1, 2] = matrix[2, 1] = 1
+
+    assert mat2db(matrix) == "(())"
 
 
 def test_load_partitioned_data_filters_partition_and_fold(tmp_path: Path):
