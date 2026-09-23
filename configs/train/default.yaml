@@ -19,8 +19,11 @@ model:
   in_channels: 18
   out_channels: 2
   base_dim: 32
-  balance_bp: null
-  lambda_valid: 0.0
+  type: null # none
+  model_kwargs:
+    balance_bp: class # class | linear_convex |none
+    w: 0.02
+    lambda_valid: 0.0 
 
 training:
   max_epochs: 10

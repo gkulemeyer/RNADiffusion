@@ -43,10 +43,10 @@ def extract(a, t, x_shape):
 # ref 2 https://github.com/lucidrains/denoising-diffusion-pytorch/blob/5989f4c77eafcdc6be0fb4739f0f277a6dd7f7d8/denoising_diffusion_pytorch/denoising_diffusion_pytorch.py
 
 class DiffusionModel(nn.Module):
-    def __init__(self, num_classes, time_steps, model, loss_type="vb_all", **kwargs):
+    def __init__(self, num_classes, time_steps, diffuser, loss_type="vb_all", **kwargs):
         super().__init__() 
         assert loss_type in ('vb_stochastic', 'vb_all')
-        self.diffuser = model(**kwargs)
+        self.diffuser = diffuser(**kwargs)
         self.num_classes = num_classes
         self.time_steps = time_steps
         self.loss_type = loss_type

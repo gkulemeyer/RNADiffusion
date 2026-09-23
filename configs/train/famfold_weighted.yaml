@@ -1,0 +1,21 @@
+experiment:
+  name: ""
+  note: "Famfold training config"
+  seed: 42
+
+data:
+  base_path: "data/ArchiveII.csv"
+  partition_path: "data/famfold/ArchiveII_famfold.csv"
+  partition_scheme: "famfold"
+  fold: "" 
+
+model:
+  evaluate: true
+  load_pretrained: false
+  pretrained_path: "path/to/pretrained/model.ckptS"
+  timesteps: 5
+  type: weighted # weighted | none
+  model_kwargs:
+    balance_bp: class # class | linear_convex |none
+    w: 0.02 
+    lambda_valid: 1.0 
