@@ -22,7 +22,8 @@ SEED = 42
 CHUNK_SIZE = 1
 PARTITION = "test"
 SAVE_AS = "db"
-thresholds = [0, 0.1,  0.5,  0.8,]
+# thresholds = [0, 0.1,  0.5,  0.8,]
+thresholds = [0.1]
 
 
 def resolve_inputs(threshold=0):

@@ -22,17 +22,8 @@ def validate_contact_channel(
     batch = next(iter(loader))
 
     conditioning = batch["conditioning"].to(device)
-    lengths = tr.as_tensor(
-        batch["length"],
-        dtype=tr.long,
-        device=device
-    )
-
-    target = (
-        batch["contact_oh"]
-        .to(device)
-        .argmax(dim=1)
-    )
+    lengths = tr.as_tensor(batch["length"], dtype=tr.long, device=device)
+    target = batch["contact_oh"].to(device).argmax(dim=1)
 
     tr.manual_seed(seed)
 
@@ -47,20 +38,12 @@ def validate_contact_channel(
     probs = F.softmax(logits, dim=1)
 
     # Usar el mismo criterio simétrico que en mat2bp
-    probs = 0.5 * (
-        probs
-        + probs.transpose(-1, -2)
-    )
-
+    probs = 0.5 * (probs + probs.transpose(-1, -2))
     B, _, L, _ = probs.shape
-
     indices = tr.arange(L, device=device)
     valid_nt = indices[None] < lengths[:, None]
 
-    mask = (
-        valid_nt[:, :, None]
-        & valid_nt[:, None, :]
-    )
+    mask = valid_nt[:, :, None] & valid_nt[:, None, :]
 
     upper = tr.triu(
         tr.ones(L, L, dtype=tr.bool, device=device),

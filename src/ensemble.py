@@ -65,10 +65,11 @@ class SequenceEnsemble:
 
 
 def process_sample(raw_sample, logits, threshold=0.1):
-    """Resolve one sampled contact map into a symmetric, binary matching."""
+    """Resolve one sampled contact map into a symmetric, binary matching.""" 
     length = raw_sample.shape[0]
     scores_map = tr.sigmoid(logits[1])
-    i, j = tr.triu_indices(length, length, offset=1, device=raw_sample.device)
+    # offset 4 for possible contacts (min length)
+    i, j = tr.triu_indices(length, length, offset=4, device=raw_sample.device)
     scores = scores_map[i, j]
     valid = (raw_sample[i, j] > 0) & (scores >= threshold)
     i, j, scores = i[valid], j[valid], scores[valid]
