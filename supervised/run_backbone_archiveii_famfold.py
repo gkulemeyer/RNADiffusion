@@ -32,9 +32,9 @@ VAL_EVERY_N_EPOCHS = 1
 CHECKPOINT_EVERY_N_EPOCHS = 1
 
 FOLDS = ["grp1", "tmRNA", "23s", "telomerase", "RNaseP", "5s", "srp", "tRNA", "16s"] 
-EPOCHS = 20
+EPOCHS = 100
 
-EXPERIMENT_NAME = "ArchiveII_backbone_famfold_20e"
+EXPERIMENT_NAME = "ArchiveII_backbone_famfold_100e"
 BACKBONE_IN_CHANNELS = 16
 
 
