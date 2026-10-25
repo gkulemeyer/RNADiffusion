@@ -47,6 +47,7 @@ def fold2bp(structure, open_bracket="(", close_bracket=")"):
 
 
 def dot2bp(structure):
+    """Convert a dot-bracket string to 1-based base pairs."""
     allowed = set(["."] + [char for brackets in MATCHING_BRACKETS for char in brackets])
     if not set(structure).issubset(allowed):
         return False
@@ -73,7 +74,11 @@ def mat2bp(processed_sample):
     return tr.stack([i[valid] + 1, j[valid] + 1], dim=1).tolist()
 
 def mat2db(processed_sample):
-    """Convert a processed contact matrix to dot-bracket notation."""
+    """Convert a processed contact matrix to dot-bracket notation.
+    [WARNING] This function is does not support pseudoknots and will produce 
+    invalid dot-bracket strings if the input contains them.
+    """
+    
     structure = ["."] * processed_sample.shape[0]
 
     for i, j in mat2bp(processed_sample):
