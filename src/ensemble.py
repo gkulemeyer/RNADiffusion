@@ -8,7 +8,7 @@ import pandas as pd
 import torch as tr
 from tqdm import tqdm
 
-from src.data import mat2db
+from src.data import mat2bp
 from src.metrics import contact_f1_gpu
 
 
@@ -240,7 +240,7 @@ def export_db_ensemble(samples_dir, output_csv):
     sample_paths = sorted(path for path in samples_path.iterdir() if path.suffix == ".pt")
 
     rows = []
-    for sample_path in tqdm(sample_paths, desc="Exporting dot-bracket", leave=False):
+    for sample_path in tqdm(sample_paths, desc="Exporting base-pairs", leave=False):
         ensemble = SequenceEnsemble(sample_path)
         processed_samples = ensemble.get_samples("processed")
         sequence_id = ensemble.data["id"]
@@ -250,13 +250,13 @@ def export_db_ensemble(samples_dir, output_csv):
                     "id": sequence_id,
                     "sample_id": sample_id,
                     "seed": ensemble.sample_seeds[sample_id],
-                    "sampled_structure": mat2db(processed_sample),
+                    "sampled_bp": mat2bp(processed_sample),
                 }
             )
 
     dataframe = pd.DataFrame(
         rows,
-        columns=["id", "sample_id", "seed", "sampled_structure"],
+        columns=["id", "sample_id", "seed", "sampled_bp"],
     )
     output_path = Path(output_csv)
     output_path.parent.mkdir(parents=True, exist_ok=True)

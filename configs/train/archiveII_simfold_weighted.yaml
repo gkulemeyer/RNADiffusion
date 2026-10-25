@@ -1,13 +1,13 @@
 experiment:
   name: ""
-  note: "Famfold training config"
+  note: "ArchiveII simfold training config"
   seed: 42
 
 data:
   base_path: "data/ArchiveII.csv"
-  partition_path: "data/famfold/ArchiveII_famfold.csv"
-  partition_scheme: "famfold"
-  fold: "" 
+  partition_path: "data/simfolds/boostrap/archiveII_similars_splits_less_than_512_k10_boostrap_{partition}-fold.csv"
+  partition_scheme: "simfold"
+  fold: 0 
 
 model:
   evaluate: true
