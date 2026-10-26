@@ -96,28 +96,24 @@ class SymmetricUNet(nn.Module):
         ## x shape: [Batch, 18, L, L]
         t_emb = self.time_mlp(t)
         
-        x1 = self.inc(x, t_emb)      # [B, 64, L, L] 
-        x1 = (x1 + x1.transpose(-1, -2)) / 2  # Symmetrize
+        x1 = self.inc(x, t_emb)      # [B, 64, L, L]  
         x2 = self.down1(x1)          # [B, 64, L/2, L/2]
         
-        x2 = self.enc2(x2, t_emb)    # [B, 128, L/2, L/2]
-        x2 = (x2 + x2.transpose(-1, -2)) / 2  # Symmetrize
+        x2 = self.enc2(x2, t_emb)    # [B, 128, L/2, L/2] 
         x3 = self.down2(x2)          # [B, 128, L/4, L/4]
         
-        x3 = self.bot1(x3, t_emb)   # [B, 256, L/8, L/8]
-        x3 = (x3 + x3.transpose(-1, -2)) / 2  # Symmetrize
-        x3 = self.bot2(x3, t_emb)    # [B, 128, L/4, L/4]
-        x3 = (x3 + x3.transpose(-1, -2)) / 2  # Symmetrize
+        x3 = self.bot1(x3, t_emb)   # [B, 256, L/8, L/8] 
+        x3 = self.bot2(x3, t_emb)    # [B, 128, L/4, L/4] 
         
         x_up1 = self.up1(x3)         # [B, 128, L/2, L/2]
         x_up1 = tr.cat([x_up1, x2], dim=1) # Concat: 128 + 128 = 256
-        x_up1 = self.dec1(x_up1, t_emb)       # [B, 128, L/2, L/2]
-        x_up1 = (x_up1 + x_up1.transpose(-1, -2)) / 2  # Symmetrize
+        x_up1 = self.dec1(x_up1, t_emb)       # [B, 128, L/2, L/2] 
 
         x_up2 = self.up2(x_up1)      # [B, 128, L, L] (no channel reduction)
         x_up2 = tr.cat([x_up2, x1], dim=1) # Concat: 128 + 64 = 192
-        x_up2 = self.dec2(x_up2, t_emb)       # [B, 64, L, L] (ResBlock reduces channels)
-        x_up2 = (x_up2 + x_up2.transpose(-1, -2)) / 2  # Symmetrize
-        
+        x_up2 = self.dec2(x_up2, t_emb)       # [B, 64, L, L] (ResBlock reduces channels) 
+
         logits = self.outc(x_up2)    # [B, 2, L, L]
-        return logits
+        
+        logits_sym = (logits + logits.transpose(-1, -2)) / 2  # Symmetrize logits
+        return logits_sym

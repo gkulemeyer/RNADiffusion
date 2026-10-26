@@ -15,23 +15,25 @@ from src.run_loop import run_training_and_evaluation
 # ------------------------------------------------------------
 # setup
 # ------------------------------------------------------------
-BASE_CONFIG_PATH = "configs/train/archiveII_simfold_weighted.yaml"
-EXPERIMENT_NAME = "ArchiveII_simfold_weighted"
+BASE_CONFIG_PATH = "configs/train/archiveII_simfold_weighted.yaml" 
 
 
-SIMFOLDS = ["sim40", "sim50", "sim60", "sim70", "sim80", "sim90"] 
-# SIMFOLDS = ["sim40"] 
+SIMFOLDS = ["sim40", "sim50", "sim60", "sim70", "sim80", "sim90"]  
 FOLDS = [0] 
 TIMESTEPS = [10] 
-EPOCHS = 500
+EPOCHS = 200
 
 
 
 
 BATCH_SIZE = 4
 ACCUMULATE_GRAD_BATCHES = 4
-VAL_EVERY_N_EPOCHS = 5 
+VAL_EVERY_N_EPOCHS = 25 
 
+
+
+diffuser = "symmetric_unet" # simple_unet | symmetric_unet | symmetric_resnet_unet
+EXPERIMENT_NAME = f"ArchiveII_simfold_weighted_{diffuser}"
 
 model_kwargs = { "balance_bp": "class",   "w": 0.02, "lambda_valid": 1.0} 
 
@@ -52,7 +54,7 @@ def build_job_dir(experiment_name, sim, fold, timestep):
 def simfold_path(sim):
     return f"data/simfolds/bootstrap/archiveII_similars_splits_less_than_512_k10_boostrap_{sim}-fold.csv"
 
-def build_run_config(base_config, experiment_name, fold, sim, timestep, epochs, base_dim, model_kwargs):
+def build_run_config(base_config, experiment_name, fold, sim, timestep, epochs, base_dim, diffuser, model_kwargs):
     config = copy.deepcopy(base_config) 
     job_dir = build_job_dir(experiment_name, sim, fold, timestep)
 
@@ -63,7 +65,7 @@ def build_run_config(base_config, experiment_name, fold, sim, timestep, epochs, 
     )
     config["data"]["fold"] = fold
     config["data"]["partition_path"] = simfold_path(sim)
-
+    config["model"]["diffuser"] = diffuser
     config["model"]["timesteps"] = timestep
     config["model"]["base_dim"] = base_dim
     config["model"]["load_pretrained"] = False
@@ -94,6 +96,7 @@ def main():
             timestep,
             EPOCHS,
             base_dim,
+            diffuser,
             model_kwargs
         )
 
