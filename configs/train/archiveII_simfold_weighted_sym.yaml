@@ -10,10 +10,11 @@ data:
   fold: 0 
 
 model:
+  diffuser: "simple_unet" # simple_unet | symmetric_unet | symmetric_resnet_unet
   evaluate: true
   load_pretrained: false
   pretrained_path: "path/to/pretrained/model.ckptS"
-  timesteps: 5
+  timesteps: 10
   type: weighted # weighted | none
   model_kwargs:
     balance_bp: class # class | linear_convex |none
