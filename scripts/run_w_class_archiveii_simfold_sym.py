@@ -21,7 +21,7 @@ BASE_CONFIG_PATH = "configs/train/archiveII_simfold_weighted.yaml"
 SIMFOLDS = ["sim40", "sim50", "sim60", "sim70", "sim80", "sim90"]  
 FOLDS = [0] 
 TIMESTEPS = [10] 
-EPOCHS = 200
+EPOCHS = 350
 
 
 

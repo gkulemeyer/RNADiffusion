@@ -79,7 +79,7 @@ class HardSymResBlock(nn.Module):
         h = self.norm1(h)
         h = self.act1(h)
         # symmetrize
-        # h = (h + h.transpose(-1, -2)) / 2
+        h = (h + h.transpose(-1, -2)) / 2
         
         # Time injection
         time_condition = self.mlp(time_emb)[:, :, None, None]
