@@ -3,6 +3,9 @@ from src.diffusion_extended import DiffusionModelWithLoss
 from src.layers.simpleunet import SimpleUNet
 from src.layers.symmetric_unet import SymmetricUNet
 from src.layers.symmetric_ResNetunet import SymmetricResNetUNet_Hard, SymmetricResNetUNet_Soft
+from src.layers.unet_versions import Unet_k5, Unet_k7, Unet_dilated, Unet_dilated2 
+from src.layers.exp_unet import convnextblock_unet, SelfAttn_UNet, DiT_UNet
+from src.layers.AdaGNunet import AdaGN1_UNet, AdaGN2_UNet
 
 MODEL_REGISTRY = {
     "base": DiffusionModel,
@@ -13,6 +16,16 @@ DIFFUSER_REGISTRY = {
     "symmetric_unet": SymmetricUNet,
     "symmetric_resnet_unet_soft": SymmetricResNetUNet_Soft,
     "symmetric_resnet_unet_hard": SymmetricResNetUNet_Hard,
+    "unet_k5": Unet_k5,
+    "unet_k7": Unet_k7,
+    "unet_dilated": Unet_dilated,
+    "unet_dilated2": Unet_dilated2,
+    "convnext_unet": convnextblock_unet,  
+    "selfattn_unet": SelfAttn_UNet,
+    "dit_unet": DiT_UNet,
+    "adagn1_unet": AdaGN1_UNet,
+    "adagn2_unet": AdaGN2_UNet,
+    
 }
 
 def build_model(config):
